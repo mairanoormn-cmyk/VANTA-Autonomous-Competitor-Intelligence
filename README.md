@@ -1,2 +1,209 @@
-# churn_sentinel
- AI-powered sales agent that identifies your competitors unhappy customers and automatically reaches out with targeted acquisition emails
+# 🛡️ The Churn Sentinel
+### Autonomous Competitor Intelligence & GTM Hijack Agent
+*Built for the Bright Data AI Agents Web Data Hackathon — May 2026*
+
+The Churn Sentinel is an autonomous GTM (Go-To-Market) intelligence agent that continuously scans the open web for competitor dissatisfaction signals, intent indicators, and technology transition clues. It correlates these signals with company data, synthesizes tailored sales battle cards, and pushes high-intent leads directly into your HubSpot CRM deal pipeline.
+
+---
+
+## 📐 System Architecture & Data Flow
+
+Our architecture matches the system design diagram ([output (1).png](file:///f:/Lablab/Web/output%20(1).png)) exactly:
+
+```
+[User UI Dashboard] 
+       │  (1)competitor_name
+       ▼
+[FastAPI Backend] ──(2)starts scan job ──► [Agent Orchestrator (Gemini 2.5 Flash)]
+       ▲                                                 │
+       │ (6)pushed deals & stats                         ├─► SERP API (Google searches)
+       │                                                 ├─► Web Unlocker (Reddit/boards)
+[HubSpot CRM]                                            │
+       ▲                                                 ▼
+       └────────────── (5)extracts & saves ────── [PostgreSQL Database (Supabase)]
+```
+
+1. **User Request**: User inputs a competitor (e.g. *Salesforce*) and clicks **Run Scan**.
+2. **FastAPI Initialization**: Backend initiates a job in the PostgreSQL database and opens a real-time Server-Sent Events (SSE) stream.
+3. **Agent Loop**: The Orchestrator calls the Gemini model in a tool-calling loop, selecting between `search_web` (Google searches) and `scrape_url` (Web Unlocker page scraping).
+4. **Data Scraping**: Bright Data APIs query Google SERP and bypass bot detection on community boards (Reddit, Job Boards, etc.) to fetch raw HTML.
+5. **Processing & Scoring**: The agent parses HTML, cleans text, extracts company details, and scores lead intent 1–10. Signals are saved in PostgreSQL.
+6. **Synthesis**: Clicking a lead triggers Gemini to generate talking points and outbound emails.
+7. **Action**: The user pushes the lead directly to HubSpot CRM. The Weekly Vulnerability Index dynamically recalculates on the dashboard.
+
+---
+
+## 📂 Project Structure
+
+* **[backend/](file:///f:/Lablab/Web/backend/)** — Python FastAPI Backend
+  * **[agent.py](file:///f:/Lablab/Web/backend/agent.py)**: Coordinates tool-calling loops, web scraping, and signal extraction.
+  * **[main.py](file:///f:/Lablab/Web/backend/main.py)**: API route controllers, SSE streaming logic, and CRM handlers.
+  * **[database.py](file:///f:/Lablab/Web/backend/database.py)**: Handles PostgreSQL connection and table schemas (`scan_jobs`, `signals`).
+
+  * **[requirements.txt](file:///f:/Lablab/Web/backend/requirements.txt)**: Python package dependencies.
+  * **[.env](file:///f:/Lablab/Web/backend/.env)**: Environment API configuration keys.
+* **[frontend/](file:///f:/Lablab/Web/frontend/)** — React Vite Frontend
+  * **[src/App.jsx](file:///f:/Lablab/Web/frontend/src/App.jsx)**: Main dashboard page, sliding drawer panel, and activity streams.
+  * **[src/index.css](file:///f:/Lablab/Web/frontend/src/index.css)**: Glassmorphic styling sheet.
+
+---
+
+## ⚙️ Configuration Setup
+
+Create or open the **`backend/.env`** file and specify your API credentials:
+
+```ini
+# Bright Data API Config
+BRIGHT_DATA_API_KEY=73733313-5198-4b4e-8284-1516c98ae6c3
+BRIGHT_DATA_SERP_ZONE=serp_api2
+BRIGHT_DATA_UNLOCKER_ZONE=web_unlocker1
+
+# AI Model Configuration (AIML API Gateway)
+AIML_API_KEY=596da54409e40e0780811696fe6bd50a
+AIML_MODEL=google/gemini-2.5-flash
+
+# Database Configuration (PostgreSQL / Supabase)
+DATABASE_URL=postgresql://postgres.csirbfqkegckiimingcd:K%40r%40chiisJ%40p%40nC%40pit%40l2089@aws-1-ap-southeast-2.pooler.supabase.com:5432/postgres
+
+# HubSpot CRM Integration (Optional - Leave blank for sandbox simulator mode)
+HUBSPOT_ACCESS_TOKEN=your_hubspot_token_here
+```
+
+
+---
+
+## 🚀 How to Run
+
+### Prerequisite
+Ensure you have Python 3.9+ and Node.js 18+ installed on your system.
+
+### Step 1: Launch Backend API
+1. Navigate to the backend folder:
+   ```bash
+   cd backend
+   ```
+2. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+3. Run the development server:
+   ```bash
+   python -m uvicorn main:app --host 127.0.0.1 --port 8000 --reload
+   ```
+
+### Step 2: Launch Frontend App
+1. Navigate to the frontend folder in a new terminal:
+   ```bash
+   cd frontend
+   ```
+2. Install packages:
+   ```bash
+   npm install
+   ```
+3. Start the dev server:
+   ```bash
+   npm run dev
+   ```
+
+Open **[http://localhost:5173/](http://localhost:5173/)** in your browser.
+
+---
+
+## 🔌 API Documentation
+
+### 1. `POST /api/scan`
+Opens a Server-Sent Events (SSE) stream to run a competitor vulnerability scan in real-time.
+* **Payload**:
+  ```json
+  { "competitor": "Salesforce" }
+  ```
+* **Event Types Streamed**:
+  * `thinking`: Reasoning narratives generated by the agent.
+  * `tool_call`: Triggers an active search/scrape.
+  * `search_result`: Reports scraped URL list.
+  * `signals_ready`: Returns list of parsed company structures.
+  * `complete`: Scanning completed.
+
+---
+
+### 2. `GET /api/signals`
+Retrieves scanned opportunities stored in the database.
+* **Query Parameters**:
+  * `competitor` (Optional): Filter by competitor name.
+* **Response**:
+  ```json
+  [
+    {
+      "id": 1,
+      "company_name": "Acme Corp",
+      "company_size": "50-200",
+      "industry": "FinTech",
+      "intent_score": 9,
+      "source": "Reddit",
+      "pain_point": "Pricing & Seats",
+      "raw_text": "Salesforce increased our enterprise license pricing by 30%...",
+      "is_pushed": 0
+    }
+  ]
+  ```
+
+---
+
+### 3. `POST /api/battlecard`
+Generates tactical talking points and custom sales emails for a signal.
+* **Payload**:
+  ```json
+  { "signal_id": 1 }
+  ```
+* **Response**:
+  ```json
+  {
+    "summary": "Acme Corp is actively frustrated with Salesforce cost increases.",
+    "talking_points": [
+      "Highlight our flat-rate license pricing structure.",
+      "Discuss zero-downtime migration pathways..."
+    ],
+    "email_pitch": {
+      "subject": "Optimizing software costs at Acme Corp",
+      "body": "Hi team, I noticed you are seeking alternatives to Salesforce due to license pricing spikes..."
+    }
+  }
+  ```
+
+---
+
+### 4. `POST /api/push-crm`
+Syncs deal metrics and battle cards to your CRM (HubSpot).
+* **Payload**:
+  ```json
+  {
+    "signal_id": 1,
+    "crm_type": "HubSpot"
+  }
+  ```
+* **Response**:
+  ```json
+  {
+    "success": true,
+    "message": "Lead successfully pushed via active HubSpot CRM Integration API.",
+    "real_apis": { "hubspot": true }
+  }
+  ```
+
+---
+
+### 5. `GET /api/competitor-stats`
+Compiles weekly vulnerability indices and metrics dynamically by aggregating database scan history.
+* **Response**:
+  ```json
+  [
+    {
+      "name": "Salesforce",
+      "score": 84,
+      "level": "Critical",
+      "trigger": "Pricing & Complexity",
+      "signals": 42,
+      "trend": "up"
+    }
+  ]
+  ```
