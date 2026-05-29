@@ -1,12 +1,11 @@
 """
-The Churn Sentinel — FastAPI Backend with SSE Streaming
+Vanta — FastAPI Backend with SSE Streaming
 """
 import json
 import os
-import threading
-import requests
+import httpx
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -25,37 +24,40 @@ sys.path.insert(0, str(_root_dir / "bright-data"))
 
 import agent_orchestrator as agent_module
 
-
-
-app = FastAPI(title="The Churn Sentinel API", version="2.0.0")
+app = FastAPI(title="Vanta API", version="2.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ── Request models ────────────────────────────────────────────────────────────
+# ── Request/Response models ───────────────────────────────────────────────────
 class ScanRequest(BaseModel):
     competitor: str
 
 class BattlecardRequest(BaseModel):
     signal_id: int
+    competitor: Optional[str] = None
 
 class PushRequest(BaseModel):
     signal_id: int
     crm_type: str = "HubSpot"
 
+class EnrichRequest(BaseModel):
+    company_name: str
+    industry: Optional[str] = None
+
 # ── Root ─────────────────────────────────────────────────────────────────────
 @app.get("/")
 def root():
-    return {"message": "The Churn Sentinel API v2 is running."}
+    return {"message": "Vanta API v2 is running."}
 
 # ── SSE scan endpoint ─────────────────────────────────────────────────────────
 @app.post("/api/scan")
-def start_scan(request: ScanRequest):
+async def start_scan(request: ScanRequest):
     """
     SSE stream: yields JSON events as the agent works in real-time.
     Event types: thinking | tool_call | search_result | scrape_result |
@@ -67,7 +69,7 @@ def start_scan(request: ScanRequest):
 
     job_id = database.create_scan_job(competitor)
 
-    def generate():
+    async def generate():
         # First event — job created
         yield f"data: {json.dumps({'type': 'job_created', 'job_id': job_id, 'competitor': competitor})}\n\n"
 
@@ -75,12 +77,14 @@ def start_scan(request: ScanRequest):
         found_signals = []
 
         try:
-            for event in agent_module.run_agent_stream(competitor):
+            async for event in agent_module.run_agent_stream(competitor):
                 # Persist signals when the agent finishes extracting them
                 if event.get("type") == "signals_ready":
                     found_signals = event.get("signals", [])
                     if found_signals:
                         database.add_signals(job_id, found_signals)
+                        
+
                     database.update_job_status(job_id, "SCORING", 90)
 
                 if event.get("type") == "complete":
@@ -119,40 +123,30 @@ def get_signals(competitor: Optional[str] = None, job_id: Optional[str] = None):
         return database.get_signals_by_job(job_id)
     elif competitor:
         return database.get_all_signals_by_competitor(competitor)
-    conn = database.get_db_connection()
-    cursor = conn.cursor(cursor_factory=database.psycopg2.extras.RealDictCursor)
-    cursor.execute("SELECT * FROM signals ORDER BY intent_score DESC LIMIT 50")
-    rows = cursor.fetchall()
-    cursor.close()
-    conn.close()
-    return [dict(r) for r in rows]
+    return database.get_recent_signals(limit=50)
 
 # ── Battle card endpoint ──────────────────────────────────────────────────────
 @app.post("/api/battlecard")
-def generate_battlecard(request: BattlecardRequest):
+async def generate_battlecard(request: BattlecardRequest):
     signal = database.get_signal_by_id(request.signal_id)
     if not signal:
         raise HTTPException(status_code=404, detail="Signal not found")
 
-    conn = database.get_db_connection()
-    cursor = conn.cursor(cursor_factory=database.psycopg2.extras.RealDictCursor)
-    cursor.execute(
-        "SELECT competitor FROM scan_jobs WHERE id = %s", (signal["job_id"],)
-    )
-    job_row = cursor.fetchone()
-    cursor.close()
-    conn.close()
-    competitor = job_row["competitor"] if job_row else "Competitor"
+    competitor = request.competitor
+    if not competitor:
+        job = database.get_job(signal["job_id"]) if signal.get("job_id") else None
+        competitor = job["competitor"] if job else "Competitor"
 
+    print(f"[Generate Battlecard] Using competitor: {competitor}")
 
     # Use real AIML API to generate the battle card
-    battlecard = agent_module.generate_battlecard(signal, competitor)
+    battlecard = await agent_module.generate_battlecard(signal, competitor)
     database.update_signal_battlecard(request.signal_id, battlecard)
     return battlecard
 
 # ── CRM push endpoint ─────────────────────────────────────────────────────────
 @app.post("/api/push-crm")
-def push_crm(request: PushRequest):
+async def push_crm(request: PushRequest):
     signal = database.get_signal_by_id(request.signal_id)
     if not signal:
         raise HTTPException(status_code=404, detail="Signal not found")
@@ -176,8 +170,9 @@ def push_crm(request: PushRequest):
                     "description": f"Source: {signal['source']}\nPain Point: {signal['pain_point']}\nEvidence: {signal['raw_text']}"
                 }
             }
-            resp = requests.post(url, headers=headers, json=payload, timeout=10)
-            hubspot_sent = resp.status_code in (200, 201)
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.post(url, headers=headers, json=payload)
+                hubspot_sent = resp.status_code in (200, 201)
         except Exception as e:
             print("HubSpot API error:", e)
 
@@ -199,24 +194,36 @@ def push_crm(request: PushRequest):
     }
 
 
+# ── Competitor Stats (Weekly Vulnerability Dashboard with Radar metrics) ─────
+def compute_dimension_scores(signals: List[dict]) -> dict:
+    categories = {
+        'pricing_score': ['pricing', 'cost', 'expensive', 'license', 'price'],
+        'support_score': ['support', 'service', 'response', 'help', 'sla'],
+        'feature_score': ['feature', 'missing', 'functionality', 'limitation', 'ux'],
+        'hiring_score':  ['hiring', 'migration', 'linkedin', 'job posting', 'admin'],
+        'sentiment_score': ['reddit', 'twitter', 'glassdoor', 'g2', 'trustpilot'],
+    }
+    scores = {k: 0 for k in categories}
+    for signal in signals:
+        pain = signal.get("pain_point", "").lower() if signal.get("pain_point") else ""
+        source = signal.get("source", "").lower() if signal.get("source") else ""
+        text = signal.get("raw_text", "").lower() if signal.get("raw_text") else ""
+        
+        for dimension, keywords in categories.items():
+            if any(kw in pain or kw in source or kw in text for kw in keywords):
+                scores[dimension] += int(signal.get("intent_score", 5)) * 2
+                
+    # Normalize to 0-100 scale, minimum 10 to avoid empty radar shape
+    return {k: max(10, min(v, 100)) for k, v in scores.items()}
 
-# ── Competitor Stats (Weekly Vulnerability Dashboard) ──────────────────────
 @app.get("/api/competitor-stats")
 def get_competitor_stats():
+    import psycopg2.extras as _extras
     conn = database.get_db_connection()
-    
-    # Baseline defaults
-    baselines = {
-        'Salesforce': { 'score': 84, 'level': 'Critical', 'trigger': 'Pricing & Complexity', 'signals': 42, 'trend': 'up' },
-        'HubSpot': { 'score': 61, 'level': 'Moderate', 'trigger': 'Seat Limit Cost hikes', 'signals': 28, 'trend': 'stable' },
-        'SAP': { 'score': 79, 'level': 'High', 'trigger': 'Legacy Interface Bloat', 'signals': 35, 'trend': 'up' },
-        'Zendesk': { 'score': 53, 'level': 'Moderate', 'trigger': 'Support SLA complaints', 'signals': 19, 'trend': 'down' },
-        'Oracle': { 'score': 88, 'level': 'Critical', 'trigger': 'Cloud Migration friction', 'signals': 51, 'trend': 'up' },
-        'Pipedrive': { 'score': 38, 'level': 'Low', 'trigger': 'Feature limitations', 'signals': 11, 'trend': 'stable' },
-    }
-    
+    stats_list = []
+
     try:
-        cursor = conn.cursor(cursor_factory=database.psycopg2.extras.RealDictCursor)
+        cursor = conn.cursor(cursor_factory=_extras.RealDictCursor)
         cursor.execute('''
             SELECT j.competitor, COUNT(s.id) as signal_count, AVG(s.intent_score) as avg_score
             FROM signals s
@@ -224,13 +231,11 @@ def get_competitor_stats():
             GROUP BY j.competitor
         ''')
         rows = cursor.fetchall()
-        
+
         for r in rows:
             comp = r['competitor']
-            # Find matching key case-insensitively
-            matched_key = next((k for k in baselines.keys() if k.lower() == comp.lower()), None)
-            
-            # Find most common pain point
+
+            # Most common pain point
             cursor.execute('''
                 SELECT pain_point, COUNT(pain_point) as c
                 FROM signals s
@@ -240,14 +245,20 @@ def get_competitor_stats():
                 ORDER BY c DESC LIMIT 1
             ''', (comp,))
             pain_row = cursor.fetchone()
-            
-            trigger = pain_row['pain_point'] if pain_row else "Dissatisfaction"
-            
-            # Score scaling
-            avg_score_val = int(r['avg_score'] * 10) if r['avg_score'] else 50
-            if avg_score_val > 100:
-                avg_score_val = 100
-                
+            trigger  = pain_row['pain_point'] if pain_row else "Dissatisfaction"
+
+            # All signals for radar dimensions
+            cursor.execute('''
+                SELECT s.intent_score, s.pain_point, s.source, s.raw_text
+                FROM signals s
+                JOIN scan_jobs j ON s.job_id = j.id
+                WHERE LOWER(j.competitor) = LOWER(%s)
+            ''', (comp,))
+            comp_signals    = cursor.fetchall()
+            live_dim_scores = compute_dimension_scores(comp_signals)
+
+            avg_score_val = min(int(r['avg_score'] * 10) if r['avg_score'] else 50, 100)
+
             level = "Low"
             if avg_score_val >= 80:
                 level = "Critical"
@@ -255,32 +266,30 @@ def get_competitor_stats():
                 level = "High"
             elif avg_score_val >= 50:
                 level = "Moderate"
-            
-            if matched_key:
-                baselines[matched_key] = {
-                    'score': avg_score_val,
-                    'level': level,
-                    'trigger': trigger,
-                    'signals': r['signal_count'] + baselines[matched_key]['signals'], # Aggregate real and baseline
-                    'trend': 'up' if avg_score_val > 60 else 'stable'
-                }
-            else:
-                baselines[comp] = {
-                    'score': avg_score_val,
-                    'level': level,
-                    'trigger': trigger,
-                    'signals': r['signal_count'],
-                    'trend': 'up'
-                }
+
+            stats_list.append({
+                'name':    comp,
+                'score':   avg_score_val,
+                'level':   level,
+                'trigger': trigger,
+                'signals': r['signal_count'],
+                'trend':   'up' if avg_score_val > 60 else 'stable',
+                **live_dim_scores,
+            })
+
         cursor.close()
     except Exception as e:
-        print("Competitor stats aggregation error:", e)
+        print("Competitor stats error:", e)
     finally:
         conn.close()
-        
-    return [
-        { 'name': name, **stats }
-        for name, stats in baselines.items()
-    ]
 
+    return stats_list
+
+@app.post("/api/enrich")
+async def enrich_endpoint(request: EnrichRequest):
+    try:
+        contacts = await agent_module.enrich_lead(request.company_name, request.industry or "B2B/Technology")
+        return {"success": True, "contacts": contacts}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
