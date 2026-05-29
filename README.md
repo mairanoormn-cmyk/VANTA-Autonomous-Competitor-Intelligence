@@ -204,7 +204,7 @@ Vanta/
 
 **1. Clone & Navigate**
 ```bash
-cd /path/to/vanta
+https://github.com/mairanoormn-cmyk/churn_sentinel
 ```
 
 **2. Backend Setup**
