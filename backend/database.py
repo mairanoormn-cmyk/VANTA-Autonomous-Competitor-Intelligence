@@ -41,6 +41,7 @@ def init_db():
         industry TEXT,
         intent_score INTEGER,
         source TEXT,
+        source_url TEXT,
         source_details TEXT,
         pain_point TEXT,
         raw_text TEXT,
@@ -49,6 +50,11 @@ def init_db():
         FOREIGN KEY (job_id) REFERENCES scan_jobs (id)
     )
     ''')
+    # Add source_url column if it doesn't exist (for existing databases)
+    try:
+        cursor.execute("ALTER TABLE signals ADD COLUMN IF NOT EXISTS source_url TEXT")
+    except Exception:
+        pass
     conn.commit()
     cursor.close()
     conn.close()
@@ -95,9 +101,9 @@ def add_signals(job_id, signals_list):
     for sig in signals_list:
         cursor.execute('''
             INSERT INTO signals (
-                job_id, company_name, company_size, industry, intent_score, 
-                source, source_details, pain_point, raw_text, battlecard, is_pushed
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                job_id, company_name, company_size, industry, intent_score,
+                source, source_url, source_details, pain_point, raw_text, battlecard, is_pushed
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ''', (
             job_id,
             sig.get("company_name"),
@@ -105,6 +111,7 @@ def add_signals(job_id, signals_list):
             sig.get("industry"),
             sig.get("intent_score"),
             sig.get("source"),
+            sig.get("source_url"),
             sig.get("source_details"),
             sig.get("pain_point"),
             sig.get("raw_text"),
@@ -172,6 +179,23 @@ def mark_signal_pushed(signal_id):
     cursor.close()
     conn.close()
 
-# Initialize database on module import
-init_db()
-print("PostgreSQL Database initialized successfully.")
+def get_recent_signals(limit: int = 50):
+    conn = get_db_connection()
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cursor.execute(
+        "SELECT * FROM signals ORDER BY intent_score DESC LIMIT %s",
+        (limit,)
+    )
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return [dict(r) for r in rows]
+
+# Initialize database on module import with error handling
+try:
+    init_db()
+    print("✅ PostgreSQL Database initialized successfully.")
+except Exception as e:
+    print(f"⚠️  Database initialization warning: {e}")
+    print("   Attempting to proceed anyway — database may be unavailable.")
+    print("   Ensure DATABASE_URL is set in .env file.")

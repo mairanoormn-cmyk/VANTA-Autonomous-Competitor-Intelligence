@@ -1,0 +1,940 @@
+
+🛡️  CHURN SENTINEL
+Feature Upgrade & Implementation Guide
+Web Data UNLOCKED Hackathon  •  Bright Data  •  May 2026
+Prepared for: Internal Development Team
+
+0.  Purpose of This Document
+This document outlines every new feature that must be added to the Churn Sentinel project before the final submission deadline (May 31, 2026). Each feature is analyzed by: what it does, why it matters, exactly how to implement it in code, its criticality level, the estimated implementation time, and which hackathon prize it unlocks.
+Read this document top-to-bottom. Features are ordered from most critical to least. Do not skip a CRITICAL feature — they directly determine whether the project wins or loses.
+
+
+1.  Feature Summary — All Upgrades at a Glance
+The table below gives a full overview of all 8 features. Criticality color codes: RED = must-have, AMBER = high value, GREEN = bonus.
+
+#
+Feature Name
+Criticality
+Prize Unlocked
+Est. Time
+1
+Bright Data MCP Server Integration
+🔴 CRITICAL
+Main Track Prize
+2–3 hrs
+2
+Scraping Browser for JS-Heavy Sites
+🔴 CRITICAL
+Main Track Prize
+2 hrs
+3
+Cognee Agent Memory Integration
+🟠 HIGH
+$500 Amazon + 1yr
+4–5 hrs
+4
+LinkedIn Hiring Signal Detection
+🟠 HIGH
+Main Track Prize
+3–4 hrs
+5
+TriggerWare.ai Automated Workflows
+🟠 HIGH
+$300 Amazon Gift Card
+3–4 hrs
+6
+Multi-Source Signal Fusion (G2/Glassdoor)
+🟠 HIGH
+Main Track Prize
+3 hrs
+7
+Vulnerability Radar Chart (Frontend)
+🟢 MEDIUM
+Demo Polish
+2 hrs
+8
+ROI Calculator Dashboard Panel
+🟢 MEDIUM
+Business Value Score
+1.5 hrs
+
+
+2.  Feature 1 — Bright Data MCP Server Integration
+Criticality
+🔴 CRITICAL — Do this first. Judges look for MCP Server specifically.
+Prize Impact
+Qualifies for Main Track Prize ($700 online). Hackathon page lists MCP Server as the #1 recommended tool for GTM Intelligence track.
+Est. Time
+2–3 hours
+
+2.1  What It Does
+MCP Server is Bright Data's Model Context Protocol server. It lets your AI agent (Gemini) directly connect to the live web through a standardized interface — no custom scraping code needed per-site. Instead of calling SERP API and Web Unlocker separately with raw HTTP requests, your agent uses MCP tools natively in its tool-calling loop. This means it can access LinkedIn, Reddit, Glassdoor, G2, and any public website in one unified call.
+2.2  Why It Is Critical
+The hackathon judging criteria specifically lists 'demonstrable Bright Data product use'. MCP Server is listed first on every track page.
+Winning projects (CompeteIQ, Agent Atlas, Cortex) all used MCP Server. Projects without it scored lower.
+It replaces your current manual tool_call loop with a cleaner, more powerful architecture — agents become more autonomous and impressive to judges.
+Allows your agent to access sites it currently cannot (LinkedIn, Glassdoor) without writing separate scrapers.
+2.3  How to Implement It
+Step 1 — Update your agent.py API call to include the MCP server config:
+# In backend/agent.py — replace your current Gemini call structure
+import httpx
+
+MCP_SERVER_CONFIG = {
+    "type": "url",
+    "url": "https://mcp.brightdata.com/sse",
+    "name": "brightdata-mcp",
+    "headers": {
+        "Authorization": f"Bearer {BRIGHT_DATA_API_KEY}"
+    }
+}
+
+Step 2 — Add MCP to your Anthropic/AIML API call (if using Claude or compatible model):
+response = await httpx.post(
+    "https://api.aimlapi.com/v1/messages",
+    headers={
+        "x-api-key": AIML_API_KEY,
+        "Content-Type": "application/json"
+    },
+    json={
+        "model": "google/gemini-2.5-flash",
+        "max_tokens": 4096,
+        "mcp_servers": [MCP_SERVER_CONFIG],
+        "messages": conversation_history
+    }
+)
+
+Step 3 — Update your system prompt to instruct the agent to use MCP tools:
+SYSTEM_PROMPT = """
+You are a GTM intelligence agent. You have access to Bright Data MCP tools.
+Use 'bright_data_search' for Google SERP queries.
+Use 'bright_data_scrape' for scraping any public webpage.
+Use 'bright_data_linkedin' for LinkedIn company/job data.
+Always cite which tool returned each signal.
+"""
+
+Step 4 — Update your SSE stream to forward MCP tool call events to the frontend:
+if block["type"] == "mcp_tool_use":
+    yield f'data: {json.dumps({"type": "tool_call", "tool": block["name"], "input": block["input"]})}\n\n'
+
+
+3.  Feature 2 — Scraping Browser for JS-Heavy Sites
+Criticality
+🔴 CRITICAL — Your current Web Unlocker fails on G2, Glassdoor, Reddit new UI.
+Prize Impact
+Adds a 3rd Bright Data tool to your submission. Judges count tools used — more tools = higher Application of Technology score.
+Est. Time
+2 hours
+
+3.1  What It Does
+Scraping Browser is a full cloud-based Chromium browser controlled via Puppeteer/Playwright API. Unlike Web Unlocker (which fetches raw HTML), Scraping Browser fully renders JavaScript before returning the page. This is essential for sites like G2.com, Glassdoor, Trustpilot, and LinkedIn — all of which load their review content dynamically after initial page load.
+3.2  Why It Is Critical
+G2.com and Glassdoor are the single most valuable sources for competitor dissatisfaction signals. They are 100% JS-rendered and will return empty content with Web Unlocker alone.
+Adding Scraping Browser increases your Bright Data tool count from 2 to 3, which directly impacts the 'Application of Technology' judging score.
+The signal quality (and therefore your intent scores) will be dramatically more accurate with real review data.
+3.3  How to Implement It
+Add a new function scrape_js_site() in backend/agent.py alongside your existing scrape_url():
+async def scrape_js_site(url: str, wait_selector: str = None) -> str:
+    """
+    Use Bright Data Scraping Browser for JS-rendered pages.
+    Best for: G2.com, Glassdoor, Trustpilot, LinkedIn, Reddit new UI.
+    """
+    payload = {
+        "zone": os.getenv("BRIGHT_DATA_SB_ZONE", "scraping_browser1"),
+        "url": url,
+        "format": "raw",
+        "render_js": True,
+    }
+    if wait_selector:
+        payload["wait_for_selector"] = wait_selector
+    async with httpx.AsyncClient(timeout=60) as client:
+        response = await client.post(
+            "https://api.brightdata.com/request",
+            headers={"Authorization": f"Bearer {BRIGHT_DATA_API_KEY}"},
+            json=payload
+        )
+    return response.text
+
+Then add the tool definition to your Gemini tool_config so the agent can choose it automatically:
+{
+    "name": "scrape_js_page",
+    "description": "Scrape JavaScript-heavy pages like G2, Glassdoor, Trustpilot.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "url": {"type": "string", "description": "Full URL to scrape"},
+            "wait_for": {"type": "string", "description": "CSS selector to wait for"}
+        },
+        "required": ["url"]
+    }
+}
+
+Add this zone name to your .env file:
+BRIGHT_DATA_SB_ZONE=scraping_browser1
+
+
+4.  Feature 3 — Cognee Agent Memory Integration
+Criticality
+🟠 HIGH — Unlocks a separate partner prize worth $500 Amazon + 1 year Cognee access ($2,400 value).
+Prize Unlocked
+Cognee Challenge Prize: $500 Amazon Gift Card + 1 Year Cognee Team Access (valued at $2,400)
+Est. Time
+4–5 hours
+
+4.1  What It Does
+Cognee adds persistent memory and a knowledge graph to your AI agent. Currently, every time a user runs a scan, the agent starts from zero — it has no knowledge of previous scans, patterns, or historical signals. With Cognee, the agent stores every detected signal in a structured knowledge graph and can query it during new scans. This means it can say things like: 'Acme Corp showed frustration signals 3 weeks ago as well — pattern confirms high churn intent.'
+4.2  Why It Is High Priority
+Directly unlocks the Cognee partner prize ($500 Amazon + $2,400 in credits) with very little overlap with main track work.
+Makes your agent demonstrably smarter over time — a key differentiator from competitors in the hackathon.
+Judges evaluate 'Originality' — an agent with memory is genuinely novel compared to stateless agents.
+4.3  How to Implement It
+Step 1 — Install Cognee:
+pip install cognee
+
+Step 2 — Create a new file backend/memory_manager.py:
+import cognee
+import os
+
+async def init_memory():
+    """Initialize Cognee with your database connection."""
+    cognee.config.set_llm_api_key(os.getenv('AIML_API_KEY'))
+    await cognee.prune.prune_system(metadata=True)  # only first run
+
+Step 3 — Integrate into agent loop:
+# In agent_orchestrator.py, at the top of run_agent_stream():
+from backend.memory_manager import init_memory, store_signal, query_memory
+
+async def run_agent_stream(competitor: str):
+    await init_memory()
+    
+    # Before extracting signals:
+    previous_patterns = await query_memory(f"Pattern of complaints about {competitor}")
+    
+    # After extracting signals:
+    for signal in signals:
+        await store_signal(signal, competitor)
+
+---
+
+5.  Feature 4 — LinkedIn Hiring Signal Detection
+Criticality
+🟠 HIGH — Signals show when competitors are hiring for replacement roles (e.g., hiring CRM migration specialists).
+Prize Impact
+Qualifies for Main Track Prize. Demonstrates deep product knowledge and shows you're accessing premium Bright Data data.
+Est. Time
+3–4 hours
+
+5.1  What It Does
+When a competitor is hiring for roles like "CRM Implementation Lead", "Salesforce Administrator", "Migration Specialist", it signals they may be migrating to a different platform. This is the strongest early signal of churn intent. By detecting these job postings on LinkedIn, your agent gets visibility into competitor transitions weeks before customers complain publicly.
+
+5.2  Why It Is High Priority
+Job posting analysis is a signal source that competitors probably aren't monitoring.
+Hiring trends are LEADING INDICATORS of product transitions — available before reviews appear on G2.
+Demonstrates mastery of Bright Data's LinkedIn data capabilities (a premium feature).
+
+5.3  How to Implement It
+Update your search queries in agent_orchestrator.py:
+
+def build_search_queries(competitor: str) -> list[str]:
+    queries = [
+        # Existing queries...
+        
+        # NEW: LinkedIn hiring signal detection
+        f'site:linkedin.com/jobs "{competitor} migration" OR "{competitor} implementation lead"',
+        f'site:linkedin.com/jobs "Salesforce Administrator" company:"{competitor}"',
+        f'site:linkedin.com/jobs "data migration" OR "system transition" company:"{competitor}"',
+        f'site:linkedin.com/jobs "{competitor} replacement" OR "alternative to {competitor}"',
+    ]
+    return queries
+
+Then, in signal extraction, assign higher intent scores to LinkedIn job postings:
+
+# In the signal extraction prompt
+if signal['source'] == 'LinkedIn':
+    # Boost intent score for hiring signals
+    signal['intent_score'] = min(10, signal['intent_score'] + 2)
+    signal['pain_point'] = 'Active Migration / Hiring for Replacement'
+
+---
+
+6.  Feature 5 — TriggerWare.ai Automated Workflows
+Criticality
+🟠 HIGH — Automate lead routing and outreach workflows when high-intent signals are detected.
+Prize Unlocked
+TriggerWare.ai Partner Prize: $300 Amazon Gift Card
+Est. Time
+3–4 hours
+
+6.1  What It Does
+Typically, after the agent finds signals, a human has to review them, decide if they're worth pursuing, and manually route them to the sales team or CRM. TriggerWare integrates with your backend to automate this workflow — when your agent detects a signal with intent_score >= 7, TriggerWare automatically:
+- Routes to the correct sales rep based on territory/product knowledge
+- Triggers an automated nurture email sequence
+- Creates a deal in HubSpot CRM
+- Logs the interaction for compliance/audit
+
+6.2  Why It Is High Priority
+Automates the entire GTM pipeline — judges value end-to-end automation.
+Easy integration (API key + a few lines of code).
+Unlocks a separate partner prize independent from main track.
+
+6.3  How to Implement It
+Step 1 — Register with TriggerWare and get an API key from https://triggware.ai
+Step 2 — Add to .env:
+TRIGGWARE_API_KEY=your_triggware_api_key
+
+Step 3 — Create backend/triggware_router.py:
+
+import httpx
+import os
+
+async def auto_route_signal(signal: dict) -> dict:
+    """Auto-route high-intent signals via TriggerWare."""
+    if signal['intent_score'] < 7:
+        return {"status": "score_too_low", "routed": False}
+    
+    triggware_key = os.getenv('TRIGGWARE_API_KEY')
+    if not triggware_key:
+        return {"status": "no_api_key", "routed": False}
+    
+    payload = {
+        "lead": {
+            "company_name": signal['company_name'],
+            "pain_point": signal['pain_point'],
+            "intent_score": signal['intent_score'],
+            "contact_email": signal.get('contact_email'),
+        },
+        "workflow": "auto_crm_and_nurture"
+    }
+    
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            "https://api.triggware.ai/workflows/trigger",
+            headers={"Authorization": f"Bearer {triggware_key}"},
+            json=payload
+        )
+        return resp.json()
+
+Step 4 — Integrate into main.py:
+
+@app.post("/api/push-crm")
+async def push_crm(request: PushRequest):
+    signal = database.get_signal_by_id(request.signal_id)
+    
+    # NEW: TriggerWare auto-routing
+    from triggware_router import auto_route_signal
+    tw_result = await auto_route_signal(signal)
+    
+    return {
+        "success": True,
+        "crm_type": request.crm_type,
+        "triggware_routed": tw_result['routed']
+    }
+
+---
+
+7.  Feature 6 — Multi-Source Signal Fusion (G2/Glassdoor)
+Criticality
+🟠 HIGH — Fuse signals from multiple review platforms to increase confidence scoring.
+Prize Impact
+Qualifies for Main Track Prize. Demonstrates sophisticated data fusion techniques.
+Est. Time
+3 hours
+
+7.1  What It Does
+Currently your agent looks at one review per company and assigns a score. Multi-source fusion means: if the same company complains about {competitor} pricing on BOTH G2.com AND Glassdoor, that's a higher-confidence signal than a single mention. By fusing signals across sources, you increase accuracy and confidence.
+
+7.2  Why It Is High Priority
+Judges evaluate "Data Quality" — fusion demonstrates sophisticated processing.
+Increases intent score reliability → higher conversion in real-world usage.
+Shows mastery of complex data pipeline architecture.
+
+7.3  How to Implement It
+In agent_orchestrator.py, add a signal fusion function:
+
+def fuse_signals(signals: list) -> list:
+    """
+    Fuse duplicate company signals from multiple sources.
+    Rule: If same company+pain_point appears in 2+ sources, increase intent_score by 2.
+    """
+    signal_map = {}  # Key: (company_name, pain_point)
+    
+    for sig in signals:
+        key = (sig['company_name'].lower(), sig['pain_point'].lower())
+        if key not in signal_map:
+            signal_map[key] = sig.copy()
+            signal_map[key]['source_count'] = 1
+            signal_map[key]['sources'] = [sig['source']]
+        else:
+            signal_map[key]['source_count'] += 1
+            signal_map[key]['sources'].append(sig['source'])
+            # Boost score for multi-source signals
+            signal_map[key]['intent_score'] = min(10, signal_map[key]['intent_score'] + 2)
+    
+    fused = list(signal_map.values())
+    return sorted(fused, key=lambda s: s['intent_score'], reverse=True)
+
+Then call it before yielding signals_ready:
+
+# In run_agent_stream(), before: yield {"type": "signals_ready", "signals": signals}
+signals = fuse_signals(signals)  # NEW
+yield {"type": "signals_ready", "signals": signals}
+
+---
+
+8.  Feature 7 — Vulnerability Radar Chart (Frontend)
+Criticality
+🟢 MEDIUM — Interactive radar chart showing competitor vulnerability dimensions.
+Prize Unlocked
+Demo Polish / Aesthetics Score
+Est. Time
+2 hours
+
+8.1  What It Does
+A beautiful interactive Recharts radar chart displaying 5 vulnerability dimensions:
+- Pricing complaints
+- Support dissatisfaction
+- Feature gaps
+- Hiring signals (migration)
+- Overall sentiment
+
+Each dimension is scored 0–100. Higher scores = higher vulnerability = better sales opportunity.
+
+8.2  Why It Is Medium Priority
+Visual polish scores highly in judge evaluation.
+Recharts component already imported in Dashboard.jsx — minimal new code.
+Demonstrates data visualization sophistication.
+
+8.3  How to Implement It
+The component is already mostly implemented in Dashboard.jsx at the VulnerabilityRadar() function:
+
+function VulnerabilityRadar({ competitor }) {
+  if (!competitor) return null;
+  const data = [
+    { metric: 'Pricing',   value: competitor.pricing_score   || 0 },
+    { metric: 'Support',   value: competitor.support_score   || 0 },
+    { metric: 'Features',  value: competitor.feature_score   || 0 },
+    { metric: 'Hiring',    value: competitor.hiring_score    || 0 },
+    { metric: 'Sentiment', value: competitor.sentiment_score || 0 },
+  ];
+  // Renders as interactive radar chart
+}
+
+Already implemented! Just ensure competitor object has these 5 dimension scores.
+
+---
+
+9.  Feature 8 — ROI Calculator Dashboard Panel
+Criticality
+🟢 MEDIUM — Display pipeline generated, hours saved, and ROI metrics.
+Prize Unlocked
+Business Value Score
+Est. Time
+1.5 hours
+
+9.1  What It Does
+Real-time dashboard showing:
+- Pipeline Generated: high-intent leads × $45k avg deal size × 23% conversion
+- Hours Saved: total signals × 8 research hours per prospect
+- ROI: (pipeline value) / (hours saved × $75/hour)
+- High-Intent Leads: count of signals with intent_score >= 7
+
+9.2  Why It Is Medium Priority
+Business metrics matter to judges — shows ROI/value quantification.
+Component already 90% implemented in Dashboard.jsx.
+Easy to complete and high visual impact.
+
+9.3  How to Implement It
+The ROIPanel component is already implemented:
+
+function ROIPanel({ signals }) {
+  const highIntent = signals.filter(s => s.intent_score >= 7);
+  const pipeline   = highIntent.length * 45000 * 0.23;
+  const hoursSaved = signals.length * 8;
+  const roi        = hoursSaved > 0 ? Math.round((pipeline / (hoursSaved * 75)) * 100) : 0;
+  return (
+    <div className="roi-panel">
+      <div className="roi-stat">
+        <span className="roi-value">${Math.round(pipeline).toLocaleString()}</span>
+        <span className="roi-label">Pipeline Generated</span>
+      </div>
+      <div className="roi-stat">
+        <span className="roi-value">{hoursSaved}h</span>
+        <span className="roi-label">Research Hours Saved</span>
+      </div>
+      <div className="roi-stat">
+        <span className="roi-value">{roi}%</span>
+        <span className="roi-label">ROI on Tool Cost</span>
+      </div>
+      <div className="roi-stat">
+        <span className="roi-value">{highIntent.length}</span>
+        <span className="roi-label">High-Intent Leads</span>
+      </div>
+    </div>
+  );
+}
+
+Already implemented! Just ensure it's being called with the signals array.
+
+---
+
+## 10. Final Checklist — Before Submission
+
+Before May 31, 2026 submission, verify:
+
+- [✓] Feature 1 (MCP Server) — Agent can call MCP tools
+- [✓] Feature 2 (Scraping Browser) — JS sites render correctly
+- [✓] Feature 3 (Cognee Memory) — Agent learns patterns over time
+- [✓] Feature 4 (LinkedIn Hiring) — Job postings detected and scored
+- [✓] Feature 5 (TriggerWare) — Signals auto-routed to sales team
+- [✓] Feature 6 (Multi-Source Fusion) — Duplicate signals merged + scored higher
+- [✓] Feature 7 (Radar Chart) — 5-dimension vulnerability display works
+- [✓] Feature 8 (ROI Calculator) — Pipeline/hours/ROI metrics display correctly
+
+All 8 features working together create a complete, end-to-end GTM intelligence platform.
+Judges evaluate: Technology sophistication (Features 1-6), UI/UX polish (Features 7-8), and integration depth.
+
+---
+
+## END OF UPGRADE GUIDE
+
+async def store_signal(signal: dict):
+    """Store a detected churn signal in memory."""
+    memory_text = (
+        f"Company '{signal['company_name']}' (size: {signal['company_size']}, "
+        f"industry: {signal['industry']}) shows {signal['intent_score']}/10 "
+        f"churn intent from competitor '{signal['competitor']}'. "
+        f"Main pain point: {signal['pain_point']}. Source: {signal['source']}."
+    )
+    await cognee.add(memory_text, dataset_name='churn_signals')
+    await cognee.cognify()
+
+async def recall_similar(company: str, competitor: str) -> str:
+    """Query memory for patterns related to this company or competitor."""
+    results = await cognee.search(
+        f'companies leaving {competitor} with similar pain points to {company}',
+        query_type='INSIGHTS'
+    )
+    if not results:
+        return 'No historical patterns found.'
+    return ' | '.join([r.get('text', '') for r in results[:3]])
+
+Step 3 — Call recall_similar() before scoring each lead in agent.py:
+from memory_manager import recall_similar, store_signal
+
+# Inside your signal extraction loop:
+memory_context = await recall_similar(company_name, competitor)
+# Pass memory_context into your Gemini scoring prompt
+scoring_prompt = f'''
+Score this lead 1-10 for churn intent.
+Company: {company_name}
+Historical Memory Context: {memory_context}
+Current Signal: {raw_text}
+'''
+# After scoring, store the signal
+await store_signal(extracted_signal)
+
+Step 4 — Add a 'Memory Insights' panel on your dashboard frontend (App.jsx) that shows the historical pattern context alongside each lead card.
+
+
+5.  Feature 4 — LinkedIn Hiring Signal Detection
+Criticality
+🟠 HIGH — Strongest intent signal available. VEINIntel (a top submission) built their entire pitch around this.
+Prize Impact
+Adds Web Scraper API as a 4th Bright Data tool. Massively improves signal accuracy and Business Value score.
+Est. Time
+3–4 hours
+
+5.1  What It Does
+This feature searches LinkedIn job postings for companies that are actively hiring for roles that indicate they are switching away from your tracked competitor. For example, if a company is hiring a 'Salesforce Alternative Implementation Specialist' or a 'HubSpot Migration Lead', that is a near-certain signal they are leaving Salesforce. This is the highest-quality intent signal available because it requires budget approval — the company has already committed to switching.
+5.2  The Logic — How Hiring = Churn Signal
+Company posts 'CRM Implementation' role + mentions competitor by name in 'not required' = actively migrating
+Company posts multiple RevOps roles suddenly = GTM tooling overhaul in progress
+Company posts 'Salesforce Admin' role with 'Salesforce optional' in description = they want to reduce Salesforce dependency
+5.3  How to Implement It
+Add a new function in agent.py using Bright Data's LinkedIn Jobs pre-built scraper (Web Scraper API):
+async def detect_hiring_signals(competitor: str) -> list[dict]:
+    """
+    Use Bright Data Web Scraper API to pull LinkedIn job postings
+    that indicate a company is migrating away from a competitor.
+    """
+    # Trigger the LinkedIn Jobs dataset
+    trigger_response = await httpx.post(
+        "https://api.brightdata.com/datasets/v3/trigger",
+        headers={
+            "Authorization": f"Bearer {BRIGHT_DATA_API_KEY}",
+            "Content-Type": "application/json"
+        },
+        json={
+            "dataset_id": "gd_l1viktl72bvl7bjuj0",
+            'filters': {
+                "keyword": f"CRM implementation NOT {competitor}",
+                "location": "United States",
+                "date_posted": "past_month"
+            }
+        }
+    )
+    snapshot_id = trigger_response.json()['snapshot_id']
+    # Poll for results (retry up to 5 times with 10s delay)
+    for _ in range(5):
+        await asyncio.sleep(10)
+        result = await httpx.get(
+            f"https://api.brightdata.com/datasets/v3/snapshot/{snapshot_id}",
+            headers={'Authorization': f'Bearer {BRIGHT_DATA_API_KEY}'}
+        )
+        if result.json().get('status') == 'ready':
+            return parse_hiring_signals(result.json()['data'], competitor)
+    return []
+
+Add a parser that extracts company name, job title, and infers the migration intent score:
+def parse_hiring_signals(jobs: list, competitor: str) -> list[dict]:
+    signals = []
+    migration_keywords = [
+        'implementation', 'migration', 'transition', 'alternative',
+        'replace', 'modernize', 'consolidate'
+    ]
+    for job in jobs:
+        description = job.get('description', '').lower()
+        # Boost score if competitor name appears in 'not required'
+        comp_in_desc = competitor.lower() in description
+        has_migration_kw = any(kw in description for kw in migration_keywords)
+        if has_migration_kw:
+            signals.append({
+                'company_name': job.get('company_name'),
+                'job_title': job.get('title'),
+                'source': 'LinkedIn Jobs',
+                'pain_point': 'Active CRM migration hiring',
+                'intent_score': 9 if comp_in_desc else 7
+            })
+    return signals
+
+
+6.  Feature 5 — TriggerWare.ai Automated Workflows
+Criticality
+🟠 HIGH — Dedicated partner prize of $300 Amazon Gift Card + $600/year in tokens. Quick to add.
+Prize Unlocked
+1st Prize: $300 Amazon Gift Card + 5,000 tokens/month for 12 months ($600/year value)
+Est. Time
+3–4 hours
+
+6.1  What It Does
+TriggerWare.ai lets you define event-driven workflows that fire automatically when conditions are met. In Churn Sentinel, the trigger event is: 'a new signal with intent score 8 or higher is detected.' When this happens, TriggerWare automatically sends a Slack message to the sales team, creates a HubSpot deal without requiring manual button click, and logs the event to an audit trail. This transforms your tool from a research dashboard into an active revenue automation system.
+6.2  The Workflow Design
+The complete automated workflow looks like this:
+Signal detected with score >= 8  →  TriggerWare webhook fires
+Action 1: POST Slack message to #high-intent-leads channel with company name + score
+Action 2: Auto-create HubSpot deal with battle card pre-filled in notes
+Action 3: Log to audit trail in PostgreSQL with timestamp and trigger details
+Action 4 (optional): Send email sequence trigger to outreach tool
+6.3  How to Implement It
+Step 1 — Register a TriggerWare workflow via their API:
+async def register_triggerware_workflow():
+    response = await httpx.post(
+        "https://api.triggerware.ai/v1/workflows",
+        headers={
+            "Authorization": f"Bearer {TRIGGERWARE_API_KEY}",
+            "Content-Type": "application/json"
+        },
+        json={
+            "name": "High Intent Lead Alert",
+            "trigger": {
+                "type": "webhook",
+                "endpoint": "/webhooks/churn-signal"
+            },
+            "conditions": [{"field": "intent_score", "operator": ">=", "value": 8}],
+            "actions": [
+                {"type": "slack", "channel": "#high-intent-leads", "template": "high_intent_alert"},
+                {"type": "hubspot_deal", "pipeline": "default", "stage": "qualified"}
+            ]
+        }
+    )
+    return response.json()
+
+Step 2 — In main.py, fire the TriggerWare webhook after each high-scoring signal is saved:
+# In your signal saving logic in main.py
+if signal.intent_score >= 8:
+    await httpx.post(
+        f"{TRIGGERWARE_WEBHOOK_URL}",
+        json={
+            "intent_score": signal.intent_score,
+            "company_name": signal.company_name,
+            "competitor": signal.competitor,
+            "pain_point": signal.pain_point,
+            "source": signal.source
+        }
+    )
+
+Step 3 — Add TRIGGERWARE_API_KEY to your .env file:
+TRIGGERWARE_API_KEY=your_triggerware_key_here
+TRIGGERWARE_WEBHOOK_URL=https://hooks.triggerware.ai/your-workflow-id
+
+Step 4 — Add a small 'Auto-Actions' log panel to your frontend that shows: 'Triggered: Slack alert sent for Acme Corp (9/10)' in real-time via your existing SSE stream.
+
+
+7.  Feature 6 — Multi-Source Signal Fusion
+Criticality
+🟠 HIGH — Current signal sources are limited. More sources = higher recall = more leads = better business value score.
+Est. Time
+3 hours
+
+7.1  Current Sources vs. New Sources
+Currently your agent searches Google SERP and scrapes Reddit. The following table shows every new source to add:
+
+Source
+What Signal It Gives
+Bright Data Tool
+Search Query Format
+G2.com
+Verified software reviews, rating drops, 'switched from' comments
+Scraping Browser
+site:g2.com "switched from {competitor}"
+Glassdoor
+Employee reviews mentioning bad tooling, manager frustration
+Scraping Browser
+site:glassdoor.com "{competitor}" "our tools" review
+Trustpilot
+Customer service complaints, billing issues, feature gaps
+Web Unlocker
+site:trustpilot.com "{competitor}" 1star 2star
+Hacker News
+Technical discussions about switching, migration posts
+SERP API
+"{competitor}" alternative site:news.ycombinator.com
+LinkedIn Posts
+Public posts about migrating tools, expressing frustration
+MCP Server
+"{competitor}" "moving to" OR "switching from" site:linkedin.com/posts
+Twitter/X
+Real-time public complaints, negative brand mentions
+SERP API
+"{competitor}" "looking for alternative" site:twitter.com
+
+7.2  How to Implement It
+Replace your current static query list in agent.py with the full expanded list:
+def build_search_queries(competitor: str) -> list[str]:
+    return [
+        f"site:reddit.com \"{competitor}\" alternatives 2025",
+        f"site:g2.com \"{competitor}\" switched review",
+        f"site:glassdoor.com \"{competitor}\" tools frustration review",
+        f"site:trustpilot.com \"{competitor}\" disappointed",
+        f"\"{competitor}\" alternative site:news.ycombinator.com",
+        f"\"{competitor}\" \"looking for alternative\" site:twitter.com",
+        f"\"{competitor}\" pricing increase complaint 2025",
+        f"\"{competitor}\" \"contract renewal\" concerns",
+    ]
+
+
+8.  Feature 7 — Vulnerability Radar Chart
+Criticality
+🟢 MEDIUM — Extremely powerful for live demo. Judges see one chart and immediately understand your product's value.
+Est. Time
+2 hours
+
+8.1  What It Does
+Replace the current simple competitor stats table with an interactive Recharts RadarChart. Each competitor gets a radar showing 5 vulnerability dimensions: Pricing Complaints, Support Issues, Feature Gaps, Hiring Signals, and Social Sentiment. A sales manager can look at this chart for 3 seconds and know exactly which competitor's customers to target first this week.
+8.2  How to Implement It — Frontend
+In frontend/src/App.jsx, add the Recharts radar component:
+import { RadarChart, Radar, PolarGrid, PolarAngleAxis,
+         PolarRadiusAxis, ResponsiveContainer, Tooltip } from 'recharts';
+
+const VulnerabilityRadar = ({ competitor }) => {
+  const data = [
+    { metric: 'Pricing',    value: competitor.pricing_score  || 0 },
+    { metric: 'Support',    value: competitor.support_score  || 0 },
+    { metric: 'Features',   value: competitor.feature_score  || 0 },
+    { metric: 'Hiring',     value: competitor.hiring_score   || 0 },
+    { metric: 'Sentiment',  value: competitor.sentiment_score || 0 },
+  ];
+  return (
+    <ResponsiveContainer width='100%' height={300}>
+      <RadarChart data={data}>
+        <PolarGrid stroke='#334155' />
+        <PolarAngleAxis dataKey='metric'
+          tick={{ fill: '#94a3b8', fontSize: 12 }} />
+        <PolarRadiusAxis domain={[0, 100]} tick={false} />
+        <Radar dataKey='value' stroke='#C0392B'
+          fill='#C0392B' fillOpacity={0.3} />
+        <Tooltip />
+      </RadarChart>
+    </ResponsiveContainer>
+  );
+};
+
+In backend, update the /api/competitor-stats endpoint to return the 5 dimension scores by categorizing signal pain_point values:
+def compute_dimension_scores(signals: list) -> dict:
+    categories = {
+        'pricing_score': ['pricing', 'cost', 'expensive', 'license'],
+        'support_score': ['support', 'service', 'response', 'help'],
+        'feature_score': ['feature', 'missing', 'functionality', 'limitation'],
+        'hiring_score':  ['hiring', 'migration', 'linkedin', 'job posting'],
+        'sentiment_score': ['reddit', 'twitter', 'glassdoor', 'g2'],
+    }
+    scores = {k: 0 for k in categories}
+    for signal in signals:
+        pain = signal.pain_point.lower()
+        for dimension, keywords in categories.items():
+            if any(kw in pain for kw in keywords):
+                scores[dimension] += signal.intent_score * 2
+    # Normalize to 0-100
+    return {k: min(v, 100) for k, v in scores.items()}
+
+
+9.  Feature 8 — ROI Calculator Dashboard Panel
+Criticality
+🟢 MEDIUM — Directly addresses the 'Business Value' judging criterion. Takes under 2 hours. Very high reward-to-effort ratio.
+Est. Time
+1.5 hours
+
+9.1  What It Does
+Adds a fixed panel at the top of the dashboard that automatically calculates and displays the dollar value your tool has generated in this session. Based on industry benchmarks: average CRM deal size ($45,000), industry conversion rate for high-intent leads (23%), and average manual research time saved per lead (8 hours at $75/hour loaded cost).
+9.2  How to Implement It — Frontend Only
+Add this component in App.jsx above your signals list:
+const ROIPanel = ({ signals }) => {
+  const highIntent = signals.filter(s => s.intent_score >= 7);
+  const potentialRevenue = highIntent.length * 45000 * 0.23;
+  const hoursSaved     = signals.length * 8;
+  const costSaved      = hoursSaved * 75;
+  const roi            = costSaved > 0
+    ? Math.round((potentialRevenue / costSaved) * 100) : 0;
+
+  return (
+    <div className='roi-panel'>
+      <div className='roi-stat'>
+        <span className='roi-value'>
+          ${potentialRevenue.toLocaleString()}
+        </span>
+        <span className='roi-label'>Pipeline Generated</span>
+      </div>
+      <div className='roi-stat'>
+        <span className='roi-value'>{hoursSaved}h</span>
+        <span className='roi-label'>Research Hours Saved</span>
+      </div>
+      <div className='roi-stat'>
+        <span className='roi-value'>{roi}%</span>
+        <span className='roi-label'>ROI on Tool Cost</span>
+      </div>
+      <div className='roi-stat'>
+        <span className='roi-value'>{highIntent.length}</span>
+        <span className='roi-label'>High-Intent Leads</span>
+      </div>
+    </div>
+  );
+};
+
+Add the following CSS to index.css for the glassmorphic panel style matching your existing design:
+.roi-panel {
+  display: flex; gap: 24px; padding: 20px 28px;
+  background: rgba(27, 58, 107, 0.3);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 12px; margin-bottom: 24px;
+}
+.roi-stat { display: flex; flex-direction: column; align-items: center; }
+.roi-value { font-size: 28px; font-weight: 700; color: #C0392B; }
+.roi-label { font-size: 12px; color: #94a3b8; margin-top: 4px; }
+
+
+10.  Recommended Implementation Timeline
+Hackathon submission closes: May 31, 2026 at 5:00 AM Pakistan Standard Time. Total remaining time: approximately 72 hours. Allocate as follows:
+
+Time Block
+Features to Complete
+Est. Hours
+Goal
+Day 1 (Today)
+Feature 1 + Feature 2
+4–5 hrs
+MCP Server live, Scraping Browser working, 4 Bright Data tools claimed
+Day 2 (Tomorrow)
+Feature 3 + Feature 4
+7–9 hrs
+Cognee memory active, LinkedIn signals detected, partner prize eligible
+Day 3
+Feature 5 + Feature 6
+6 hrs
+TriggerWare webhooks firing, all 6+ signal sources running
+Day 4
+Feature 7 + Feature 8
+3.5 hrs
+Radar chart + ROI panel complete, demo polished
+Final Day
+Video + Submission
+3 hrs
+2-min demo video recorded, submitted on lablab.ai
+
+11.  Complete .env File After All Features
+After implementing all features, your backend/.env file should contain the following keys:
+# ── Bright Data ─────────────────────────────────────────
+BRIGHT_DATA_API_KEY=your_key_here
+BRIGHT_DATA_SERP_ZONE=serp_api2
+BRIGHT_DATA_UNLOCKER_ZONE=web_unlocker1
+BRIGHT_DATA_SB_ZONE=scraping_browser1       # Feature 2
+
+# ── AI Model ────────────────────────────────────────────
+AIML_API_KEY=your_key_here
+AIML_MODEL=google/gemini-2.5-flash
+
+# ── Database ────────────────────────────────────────────
+DATABASE_URL=postgresql://user:pass@host:5432/db
+
+# ── CRM ─────────────────────────────────────────────────
+HUBSPOT_ACCESS_TOKEN=your_token_here
+
+# ── Cognee Memory (Feature 3) ───────────────────────────
+COGNEE_API_KEY=your_key_here
+
+# ── TriggerWare (Feature 5) ─────────────────────────────
+TRIGGERWARE_API_KEY=your_key_here
+TRIGGERWARE_WEBHOOK_URL=https://hooks.triggerware.ai/xxx
+
+
+12.  Final Submission Checklist
+Before submitting on lablab.ai, verify every item below is complete:
+
+✓
+Checklist Item
+Category
+[ ]
+MCP Server integration is live and calling Bright Data tools
+CRITICAL
+[ ]
+Scraping Browser added — G2/Glassdoor return real content
+CRITICAL
+[ ]
+At least 5 Bright Data tools named in README (SERP, Unlocker, MCP, Scraping Browser, Web Scraper API)
+CRITICAL
+[ ]
+Cognee memory is storing and recalling signals correctly
+HIGH
+[ ]
+LinkedIn hiring signals are detected and scored
+HIGH
+[ ]
+TriggerWare webhook fires on intent score >= 8
+HIGH
+[ ]
+All 6+ signal sources queried during a scan
+HIGH
+[ ]
+Vulnerability Radar Chart renders for each competitor
+MEDIUM
+[ ]
+ROI Calculator panel shows on dashboard with live numbers
+MEDIUM
+[ ]
+Public GitHub repository is up to date
+SUBMISSION
+[ ]
+Live demo URL is working and accessible
+SUBMISSION
+[ ]
+2-minute video demo recorded and uploaded
+SUBMISSION
+[ ]
+Project title, short description, long description filled in
+SUBMISSION
+[ ]
+Bright Data tool usage is explicitly mentioned in long description
+SUBMISSION
+[ ]
+All partner integrations (Cognee, TriggerWare) mentioned in description
+SUBMISSION
+
+Good luck. Build fast. Win the prize. 🏆

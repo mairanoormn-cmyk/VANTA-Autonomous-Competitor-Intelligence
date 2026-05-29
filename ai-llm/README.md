@@ -1,44 +1,151 @@
-# 🧠 ai-llm — Agent Orchestration Core
+# ai-llm — Agent Orchestration Core
 
-This directory contains the central brain of **The Churn Sentinel**—the autonomous B2B competitive intelligence agent. It manages LLM prompts, streams real-time execution steps, and synthesizes sales enablement assets.
-
----
-
-## 📂 Code Structure
-
-### 📄 `agent_orchestrator.py`
-The main orchestrator module implementing:
-1. **`run_agent_stream(competitor)`**:
-   * A Python Generator yielding real-time events (`thinking`, `tool_call`, `search_result`, `scrape_result`, `signals_ready`, `complete`, `error`) to drive the Server-Sent Events (SSE) frontend feed.
-   * Coordinates the multi-query Google Search strategy via Bright Data SERP.
-   * Crawls search result pages using the Web Unlocker proxy.
-   * Feeds raw data to **Gemini 2.5 Flash** (via the AIML API Gateway) for signal extraction and intent scoring.
-2. **`generate_battlecard(signal, competitor)`**:
-   * Uses Gemini to analyze an extracted customer pain point and generate a structured GTM battle card containing:
-     * **Opportunity Summary**: 1-sentence sales context of the lead vulnerability.
-     * **GTM Battle Tactics**: 4 specific talking points addressing competitor issues.
-     * **Personalized Outbound Email**: Subject line and 3-paragraph outreach draft.
-     * **Objection Handling**: Typical prospect friction and recommended response.
+This directory contains the central intelligence of **Vanta** — the autonomous GTM agent. It manages the Bright Data MCP connection, fallback scraping pipeline, Claude Opus LLM calls, and all signal extraction logic.
 
 ---
 
-## 🎯 AI Prompts & Decision Parameters
+## 📄 File
 
-### 1. Intent Scoring Guidance (1–10)
-Gemini evaluates signal intent scores based on the following weight criteria:
-* **Score 9–10 (Critical Churn)**: Verified public switch signals, such as job ads seeking administrators for competing software (*"hiring Salesforce Consultant"*), or threads explicitly stating *"we are migrating off X next month"*.
-* **Score 7–8 (High Intent)**: Strong pricing/contract dissatisfaction, service outages, or user licensing cost complaints.
-* **Score 5–6 (Moderate Intent)**: Technical limitations, workflow complexity complaints, or feature gap reviews.
+### `agent_orchestrator.py`
 
-### 2. Company Profiling & Deduplication
-To prevent cold outreach to anonymous users, the prompt strictly enforces:
-* **Real Company Extraction**: Must extract actual entity names (e.g., *Innovate Sales Solutions*) instead of social media usernames (e.g., *u/salesguy*).
-* **Profile Resolution**: Automatically infers company size and industry based on contextual web clues.
-* **Mock Lead Fallback**: If a live forum post does not explicitly name the company, the LLM generates a highly realistic, contextual company lead referencing the authentic pain point from the thread.
+Single file containing all agent logic. No external dependencies beyond `bright_data_utils` and standard libraries.
 
 ---
 
-## 🔌 API Gateway Specifications
-The agent connects via the standard OpenAI SDK client directed to the **AIML API Gateway**:
-* **Base URL**: `https://api.aimlapi.com/v1`
-* **Default Model**: `google/gemini-2.5-flash` (ensures fast tokens, parallel tool execution, and zero `thought_signature` 400 bad requests).
+## � Agent Flow
+
+```
+run_agent_stream(competitor)
+        │
+        ├─► Step 1: Bright Data MCP Server (PRIMARY)
+        │     └── _run_mcp_agent(competitor)
+        │           ├── search_engine × 3 queries
+        │           ├── web_data_reddit_posts × 1
+        │           └── scrape_as_markdown × 2 (G2 + Trustpilot)
+        │                     │
+        │                     └── Claude Opus → signals[]
+        │
+        └─► Step 2: Fallback Pipeline (if MCP fails)
+              ├── SERP API × 8 queries (build_search_queries)
+              ├── Web Unlocker × 4 URLs
+              └── Scraping Browser × 2 review URLs
+                        │
+                        └── Claude Opus → signals[]
+```
+
+---
+
+## 📦 Functions
+
+### `run_agent_stream(competitor)` → `AsyncGenerator[dict, None]`
+Main entry point. Called by FastAPI `/api/scan`. Yields SSE events:
+
+| Event type | When |
+|---|---|
+| `thinking` | Agent status messages |
+| `tool_call` | Before each tool invocation |
+| `search_result` | After SERP query returns |
+| `scrape_result` | After page scrape completes |
+| `signals_ready` | When signal list is extracted |
+| `complete` | Scan finished |
+| `error` | Any unhandled exception |
+
+---
+
+### `_run_mcp_agent(competitor)` → `tuple[bool, list]`
+Connects to Bright Data MCP Server via SSE transport.
+
+**URL:** `https://mcp.brightdata.com/sse?token=<KEY>&pro=1&unlocker=<ZONE>&browser=<ZONE>`
+
+**MCP Tools used:**
+
+| Tool | Purpose |
+|---|---|
+| `search_engine` | Google SERP — Reddit, HackerNews queries |
+| `web_data_reddit_posts` | Structured Reddit post data |
+| `scrape_as_markdown` | G2 and Trustpilot review pages |
+
+Returns `(True, signals[])` on success, `(False, [])` on failure — triggers fallback.
+
+> **Note:** `web_data_linkedin_job_listings` was removed — it is a paid Bright Data feature.
+
+---
+
+### `build_search_queries(competitor)` → `list[str]`
+Builds 8 targeted Google search queries for the fallback pipeline:
+- Reddit complaints and alternatives
+- G2 reviews with switching signals
+- Trustpilot negative reviews
+- HackerNews discussions
+- General web migration mentions
+- LinkedIn alternative searches
+
+---
+
+### `generate_battlecard(signal, competitor)` → `dict`
+Calls Claude Opus to generate a full GTM battle card.
+
+**Returns:**
+```json
+{
+  "summary": "2-3 sentence account vulnerability summary",
+  "talking_points": ["...", "...", "...", "..."],
+  "email_pitch": {
+    "subject": "...",
+    "body": "..."
+  },
+  "objection_handling": {
+    "objection": "...",
+    "response": "..."
+  }
+}
+```
+
+Has a hardcoded fallback if the API call fails.
+
+---
+
+### `enrich_lead(company_name, industry)` → `list`
+Smart contact discovery using Bright Data SERP + Claude Opus.
+
+**Two strategies:**
+
+1. **Generic company name** (e.g. "Mid-Market SaaS Company") — searches for real decision makers in the same industry via LinkedIn SERP queries
+2. **Real company name** — searches directly for their leadership + scrapes company website `/about` or `/team`
+
+**Fallback:** Returns LinkedIn Sales Navigator and Apollo.io search links for manual lookup.
+
+---
+
+### `_safe_parse_signals(raw)` → `list`
+Robust JSON array parser with two fallback strategies. Handles LLM responses that include extra text before/after the JSON array.
+
+---
+
+## 🎯 Intent Scoring Guide
+
+Claude Opus scores each signal 1–10:
+
+| Score | Meaning |
+|---|---|
+| 9–10 | Actively switching — stated "we are leaving", hiring for migration |
+| 7–8 | Strong complaints, asking for alternatives, pricing frustration |
+| 5–6 | Moderate frustration, feature gaps mentioned |
+| 3–4 | General dissatisfaction, no immediate action |
+
+---
+
+## 🔌 API Configuration
+
+All calls go through **AIML API Gateway**:
+- **Base URL:** `https://api.aimlapi.com/v1/chat/completions`
+- **Model:** `anthropic/claude-opus-4-8` (set via `AIML_MODEL` in `.env`)
+- **Temperature:** `0.3` for extraction, `0.3` for battle cards, `0.4` for enrichment
+
+---
+
+## ⚠️ Known Behaviours
+
+- MCP `notifications/progress` warnings in logs are cosmetic — Bright Data sends progress notifications that the `mcp` library doesn't fully validate. Functionality is unaffected.
+- If MCP returns 0 content blocks, it falls back to manual pipeline automatically.
+- Company names from Reddit/HackerNews are inferred (anonymous posters) — Claude uses context clues (budget, industry, tool mentions) to create realistic names.
