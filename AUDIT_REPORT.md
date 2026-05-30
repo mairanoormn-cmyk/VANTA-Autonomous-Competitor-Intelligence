@@ -22,8 +22,8 @@ Your VANTA project is a sophisticated **GTM (Go-To-Market) Intelligence Agent** 
 
 | # | Issue | Severity | Fix Applied | Status |
 |---|-------|----------|-------------|--------|
-| 1 | upgrade_guide_text.txt incomplete | 🔴 CRITICAL | Completed Features 3-8 | ✅ FIXED |
-| 2 | Missing Python packages | 🔴 CRITICAL | Added: mcp, aiohttp, cognee | ✅ FIXED |
+| 1 | Dependency stack optimization | 🔴 CRITICAL | Pruned heavy/unused packages (cognee, asyncio-contextmanager) to prevent Vercel serverless size/build issues | ✅ FIXED |
+| 2 | Missing Python packages | 🔴 CRITICAL | Added: mcp, aiohttp, anyio>=4.0.0 (fixing MCP client subtyping errors) | ✅ FIXED |
 | 3 | No DB error handling | 🟠 HIGH | Added try-catch wrapper | ✅ FIXED |
 | 4 | Frontend .env missing | 🟠 HIGH | Created .env.local template | ✅ FIXED |
 | 5 | SETUP documentation | 🟢 MEDIUM | Created SETUP_GUIDE.md | ✅ ADDED |
@@ -115,12 +115,12 @@ Your VANTA project is a sophisticated **GTM (Go-To-Market) Intelligence Agent** 
 ## 🔧 FIXED FILE DETAILS
 
 ### 1. ✅ requirements.txt
-**What was added:**
+**What was configured:**
 ```
 mcp                              # Model Context Protocol
 aiohttp                          # Async HTTP client
-asyncio-contextmanager           # Async utilities
-cognee                           # Agent memory & knowledge graphs
+anyio>=4.0.0                     # For MCP subtyping support
+# cognee (removed to keep dependency footprint light and Vercel-compatible)
 ```
 
 ### 2. ✅ database.py
@@ -135,15 +135,12 @@ except Exception as e:
 ```
 **Benefit**: Backend won't crash if database connection fails on startup
 
-### 3. ✅ upgrade_guide_text.txt
-**Sections added:**
-- Feature 3: Cognee Agent Memory (4–5 hrs)
-- Feature 4: LinkedIn Hiring Signals (3–4 hrs)
-- Feature 5: TriggerWare Workflows (3–4 hrs)
-- Feature 6: Multi-Source Fusion (3 hrs)
-- Feature 7: Vulnerability Radar (2 hrs)
-- Feature 8: ROI Calculator (1.5 hrs)
-- Final Checklist & Summary
+### 3. ✅ VISUAL_FLOW_GUIDE.md
+**Sections detailed:**
+- Progressive Disclosure & User Journey States
+- Scanning, Completion, and Results Views
+- Mobile Responsive layouts and animation timelines
+- Natural main page scrolling and sticky drawer behavior
 
 ### 4. ✅ frontend/.env.local
 **Created with:**
@@ -168,14 +165,14 @@ VITE_DEBUG=true
 
 | # | Feature | Priority | Status | Implementation |
 |---|---------|----------|--------|-----------------|
-| 1 | MCP Server | 🔴 CRITICAL | ✅ COMPLETE | `agent_orchestrator.py` L68-195 |
-| 2 | Scraping Browser | 🔴 CRITICAL | ✅ COMPLETE | `bright_data_utils.py` L165 |
-| 3 | Cognee Memory | 🟠 HIGH | ✅ GUIDE DONE | See `upgrade_guide_text.txt` §4 |
-| 4 | LinkedIn Signals | 🟠 HIGH | ✅ GUIDE DONE | See `upgrade_guide_text.txt` §5 |
-| 5 | TriggerWare Workflows | 🟠 HIGH | ✅ GUIDE DONE | See `upgrade_guide_text.txt` §6 |
-| 6 | Multi-Source Fusion | 🟠 HIGH | ✅ GUIDE DONE | See `upgrade_guide_text.txt` §7 |
-| 7 | Vulnerability Radar | 🟢 MEDIUM | ✅ COMPLETE | `Dashboard.jsx` L18 |
-| 8 | ROI Calculator | 🟢 MEDIUM | ✅ COMPLETE | `Dashboard.jsx` L266 |
+| 1 | MCP Server | 🔴 CRITICAL | ✅ COMPLETE | `agent_orchestrator.py` L80-295 (using SSE transport client) |
+| 2 | Scraping Browser | 🔴 CRITICAL | ✅ COMPLETE | `bright_data_utils.py` L61-70 (async browser scraper) |
+| 3 | Cognee Memory | 🟠 HIGH | 🪵 ROADMAP | Excluded to prevent Vercel dependency size bloat |
+| 4 | LinkedIn Signals | 🟠 HIGH | ✅ COMPLETE | Scanned via custom Google SERP alternative search queries |
+| 5 | TriggerWare Workflows | 🟠 HIGH | 🪵 ROADMAP | Ready for piping scan completion events to webhooks |
+| 6 | Multi-Source Fusion | 🟠 HIGH | ✅ COMPLETE | Claude Opus fuses and extracts size/industry/intent metrics |
+| 7 | Vulnerability Radar | 🟢 MEDIUM | ✅ COMPLETE | `Dashboard.jsx` L25-34 (Recharts RadarChart component) |
+| 8 | ROI Calculator | 🟢 MEDIUM | ✅ COMPLETE | `Dashboard.jsx` L276-292 (Pipeline/Hours/ROI calculations) |
 
 ---
 
@@ -220,11 +217,9 @@ open http://localhost:5173
 
 ### Before Hackathon Submission (May 31, 2026):
 
-1. **Optional Features 3-6** (4–5 hrs each):
-   - [ ] Implement Cognee memory (Feature 3)
-   - [ ] Add LinkedIn job detection (Feature 4)
-   - [ ] Integrate TriggerWare (Feature 5)
-   - [ ] Add signal fusion logic (Feature 6)
+1. **Roadmap Integrations** (Future additions):
+   - [ ] Integrate Cognee memory service as an external microservice
+   - [ ] Implement webhook routing for TriggerWare workflow integration
 
 2. **Testing** (2 hrs):
    - [ ] Test all 7 API endpoints

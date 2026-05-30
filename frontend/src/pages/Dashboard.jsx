@@ -469,6 +469,9 @@ function Drawer({ signal, competitor, onClose, onPushed }) {
         </div>
         {!battlecard ? (
           <div className="no-battlecard">
+            <svg className="no-battlecard-icon" width="36" height="36" fill="none" viewBox="0 0 24 24" stroke="currentColor" style={{color: 'var(--purple-light)', opacity: 0.7, marginBottom: '0.2rem'}}>
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
             <h4>No Battle Card yet</h4>
             <p>Generate a personalized outbound email and talking points powered by Claude Opus.</p>
             <button className="btn-generate" onClick={generate} disabled={loading}>
@@ -646,6 +649,12 @@ function ScanWorkspace({ competitor, onBack }) {
   const abortRef = useRef(null);
   const jobIdRef = useRef(null); // track current job_id for DB signal refresh
 
+  // Stepper hooks lifted
+  const [visibleStage, setVisibleStage] = useState(0);
+  const [stageScores, setStageScores] = useState({});
+  const transitionTimerRef = useRef(null);
+  const lastProcessedActivityLength = useRef(0);
+
   const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast(null), 3500); };
 
   useEffect(() => { if (feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight; }, [activity]);
@@ -670,17 +679,14 @@ function ScanWorkspace({ competitor, onBack }) {
   }, [scanning, done, signals.length, scanState]);
 
   // After scan completes, fetch signals from DB to get real integer IDs
-  // This replaces temp_N IDs with real DB IDs so battlecard/push-crm work
   useEffect(() => {
     if (done && jobIdRef.current) {
-      // Small delay to ensure DB write is committed
       const timer = setTimeout(() => {
         fetch(`${API}/api/signals?job_id=${encodeURIComponent(jobIdRef.current)}`)
           .then(r => r.json())
           .then(data => {
             if (Array.isArray(data) && data.length > 0) {
               setSignals(data);
-              // Also update selected signal if drawer is open
               setSelected(prev => {
                 if (!prev) return null;
                 const refreshed = data.find(s =>
@@ -696,6 +702,112 @@ function ScanWorkspace({ competitor, onBack }) {
       return () => clearTimeout(timer);
     }
   }, [done]);
+
+  // Determine actual current stage based on activity - ENHANCED with better keyword matching
+  const getCurrentStage = () => {
+    if (!activity || activity.length === 0) return 0;
+    const activityText = activity.map(a => {
+      const parts = [
+        a.type || '',
+        a.message || '',
+        a.tool || '',
+        a.query || '',
+        a.url || '',
+        a.text || ''
+      ];
+      return parts.join(' ');
+    }).join(' ').toLowerCase();
+    
+    for (let i = PIPELINE_STAGES.length - 1; i >= 0; i--) {
+      const stage = PIPELINE_STAGES[i];
+      const matched = stage.keywords.some(kw => activityText.includes(kw.toLowerCase()));
+      if (matched) {
+        return i;
+      }
+    }
+    return 0;
+  };
+  
+  const currentStage = getCurrentStage();
+  const hasError = activity.some(a => a.type === 'error');
+  
+  // Extract numeric scores from activity logs for display
+  useEffect(() => {
+    const newScores = {};
+    activity.forEach(item => {
+      if (item.type === 'search_result' && item.count) {
+        newScores.search = item.count;
+      }
+      if (item.type === 'scrape_result' && item.chars) {
+        newScores.scrape = Math.round(item.chars / 1000) + 'k';
+      }
+      if (item.type === 'signals_ready' && item.total_signals) {
+        newScores.analyze = item.total_signals;
+      }
+    });
+    setStageScores(newScores);
+  }, [activity]);
+  
+  // Log-driven sequential progression with guaranteed synchronization
+  useEffect(() => {
+    if (activity.length === lastProcessedActivityLength.current) {
+      return;
+    }
+    lastProcessedActivityLength.current = activity.length;
+    
+    if (!scanning && currentStage > visibleStage) {
+      if (transitionTimerRef.current) {
+        clearInterval(transitionTimerRef.current);
+        transitionTimerRef.current = null;
+      }
+      setVisibleStage(currentStage);
+      return;
+    }
+    
+    if (scanning && currentStage > visibleStage) {
+      if (transitionTimerRef.current) {
+        clearInterval(transitionTimerRef.current);
+        transitionTimerRef.current = null;
+      }
+      
+      const stagesToAdvance = currentStage - visibleStage;
+      if (stagesToAdvance === 1) {
+        setTimeout(() => setVisibleStage(currentStage), 300);
+      } else {
+        let currentVisibleStage = visibleStage;
+        transitionTimerRef.current = setInterval(() => {
+          currentVisibleStage++;
+          setVisibleStage(currentVisibleStage);
+          if (currentVisibleStage >= currentStage) {
+            if (transitionTimerRef.current) {
+              clearInterval(transitionTimerRef.current);
+              transitionTimerRef.current = null;
+            }
+          }
+        }, 600);
+      }
+    }
+    
+    return () => {
+      if (transitionTimerRef.current) {
+        clearInterval(transitionTimerRef.current);
+        transitionTimerRef.current = null;
+      }
+    };
+  }, [activity.length, currentStage, scanning, visibleStage]);
+  
+  // Reset on new scan
+  useEffect(() => {
+    if (scanning && activity.length === 0) {
+      setVisibleStage(0);
+      setStageScores({});
+      lastProcessedActivityLength.current = 0;
+      if (transitionTimerRef.current) {
+        clearInterval(transitionTimerRef.current);
+        transitionTimerRef.current = null;
+      }
+    }
+  }, [scanning, activity.length]);
 
   const runScan = async (comp) => {
     setScanning(true); setDone(false); setActivity([]); setSignals([]); setSelected(null);
@@ -771,73 +883,136 @@ function ScanWorkspace({ competitor, onBack }) {
           <button className="btn-scan" type="submit" disabled={scanning || !newQuery.trim()}>Scan</button>
         </form>
         
-        {/* Only show stats in complete state - removed from scanning */}
-        {scanState === 'complete' && (
-          <div className="stats-bar complete">
-            <div className="stat-item"><span className="stat-value">{signals.length}</span><span>signals</span></div>
-            {highIntentCount > 0 && <div className="stat-item highlight"><span className="stat-value">{highIntentCount}</span><span>high-intent</span></div>}
-          </div>
-        )}
+        {/* Real-time counters showing during scan and complete state */}
+        <div className="stats-bar complete">
+          <div className="stat-item"><span className="stat-value">{stats.searches}</span><span>searches</span></div>
+          <div className="stat-item"><span className="stat-value">{stats.scrapes}</span><span>scrapes</span></div>
+          <div className="stat-item"><span className="stat-value">{signals.length}</span><span>signals</span></div>
+          {highIntentCount > 0 && <div className="stat-item highlight"><span className="stat-value">{highIntentCount}</span><span>high-intent</span></div>}
+        </div>
       </div>
       <div className={`progress-line ${scanning ? 'active' : ''}`}>{scanning && <div className="progress-line-fill" />}</div>
       
+      {/* Sleek, full-width progress stepper at the top of the workspace */}
+      <div className="scan-stepper-strip">
+        <div className="scan-progress-pipeline">
+          {PIPELINE_STAGES.map((stage, idx) => {
+            let status = 'pending';
+            if (hasError && idx === visibleStage) {
+              status = 'error';
+            } else if (idx < visibleStage) {
+              status = 'complete';
+            } else if (idx === visibleStage && scanning) {
+              status = 'active';
+            } else if (idx === visibleStage && !scanning) {
+              status = 'complete';
+            }
+            
+            let scoreLabel = null;
+            if (stage.key === 'search' && stageScores.search) {
+              scoreLabel = `${stageScores.search} results`;
+            } else if (stage.key === 'scrape' && stageScores.scrape) {
+              scoreLabel = `${stageScores.scrape} chars`;
+            } else if (stage.key === 'analyze' && stageScores.analyze) {
+              scoreLabel = `${stageScores.analyze} signals`;
+            }
+            
+            return (
+              <div key={stage.key} className="pipeline-step">
+                <ProgressNode label={stage.label} status={status} score={scoreLabel} />
+                {idx < PIPELINE_STAGES.length - 1 && (
+                  <div className={`pipeline-connector ${idx < visibleStage ? 'active' : ''}`} />
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
       {/* ROI Panel - only show when complete */}
       {scanState === 'complete' && <ROIPanel signals={signals} />}
       
       <div className={`workspace-body ${scanState}`}>
-        {/* Scanning state: Show centered progress card */}
-        {scanState === 'scanning' && (
-          <div className="scan-progress-container">
-            <ScanProgressCard 
-              activity={activity} 
-              scanning={scanning} 
-              competitor={competitor}
-            />
-          </div>
-        )}
-        
-        {/* Activity panel - only for complete state (collapsed) */}
-        {scanState === 'complete' && (
-          <div className={`activity-panel collapsed`}>
-            <div className="panel-header" onClick={() => setActivityExpanded(!activityExpanded)}>
-              <div className="panel-header-title">
-                <span className={`pulse-dot idle`} />
-                Activity Log
-              </div>
+        {/* Left Column: Live Agent Activity Log (always open and feeding live during scanning, collapsible when complete) */}
+        <div className={`activity-panel ${scanState === 'scanning' ? 'expanded' : activityExpanded ? 'expanded' : 'collapsed'}`}>
+          <div className="panel-header" onClick={() => scanState === 'complete' && setActivityExpanded(!activityExpanded)}>
+            <div className="panel-header-title">
+              <span className={`pulse-dot ${scanState === 'scanning' ? 'active' : 'idle'}`} />
+              Agent Activity Feed
+            </div>
+            {scanState === 'complete' && (
               <button className="expand-toggle">
                 <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" style={{transform: activityExpanded ? 'rotate(180deg)' : 'rotate(0)', transition: 'transform 0.2s'}}>
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                 </svg>
               </button>
-            </div>
-            {activityExpanded && (
-              <>
-                {activity.length === 0
-                  ? <div className="activity-empty"><div className="activity-empty-icon" /><div>No activity recorded</div></div>
-                  : <div className="activity-feed" ref={feedRef}>
-                      {activity.map((item, i) => <ActivityItem key={i} item={item} />)}
-                    </div>
-                }
-              </>
             )}
           </div>
-        )}
+          {(scanState === 'scanning' || activityExpanded) && (
+            <>
+              {activity.length === 0
+                ? <div className="activity-empty"><div className="activity-empty-icon" /><div>Agent initializing...</div></div>
+                : <div className="activity-feed" ref={feedRef}>
+                    {activity.map((item, i) => <ActivityItem key={i} item={item} />)}
+                    {scanning && (
+                      <div className="activity-feed-scanning-indicator">
+                        <div className="spinner-sm" />
+                        <span>Agent is thinking...</span>
+                      </div>
+                    )}
+                  </div>
+              }
+            </>
+          )}
+        </div>
         
-        {/* Signals panel - hidden during scan, prominent when complete */}
-        {scanState === 'complete' && (
-          <div className="results-container">
-            <div className="results-card">
-              <div className="results-card-header">
-                <div className="results-card-title">
-                  Intent Signals
-                  <span className="results-count-badge">{signals.length}</span>
-                </div>
-                {highIntentCount > 0 && (
-                  <span className="results-high-intent-badge">{highIntentCount} high-intent</span>
-                )}
+        {/* Right Column: Signals Workspace */}
+        <div className="results-container">
+          <div className="results-card">
+            <div className="results-card-header">
+              <div className="results-card-title">
+                {scanState === 'scanning' ? 'Live Signal Extraction' : 'Intent Signals'}
+                <span className="results-count-badge">{signals.length}</span>
               </div>
-              
-              <div className={`results-card-body ${selected ? 'drawer-open' : ''}`}>
+              {highIntentCount > 0 && (
+                <span className="results-high-intent-badge">{highIntentCount} high-intent</span>
+              )}
+            </div>
+            
+            <div className={`results-card-body ${selected ? 'drawer-open' : ''}`}>
+              {/* If scanning and no signals are found yet, show live analysis screen */}
+              {scanState === 'scanning' && signals.length === 0 ? (
+                <div className="live-scanner-screen">
+                  <div className="scanner-radar">
+                    <div className="radar-circle" />
+                    <div className="radar-sweep" />
+                    <div className="radar-core" />
+                  </div>
+                  <h3 className="scanner-heading">Agent Searching Open Web for Dissatisfaction Signals...</h3>
+                  <p className="scanner-subtext">Scoping G2 reviews, Trustpilot ratings, Reddit discussions, and Hacker News posts for {competitor} user frustrations.</p>
+                  
+                  <div className="scanner-stats-grid">
+                    <div className="scanner-stat-box">
+                      <span className="box-val">{stats.searches}</span>
+                      <span className="box-lbl">Google Searches</span>
+                    </div>
+                    <div className="scanner-stat-box">
+                      <span className="box-val">{stats.scrapes}</span>
+                      <span className="box-lbl">Pages Scraped</span>
+                    </div>
+                    <div className="scanner-stat-box">
+                      <span className="box-val">{stats.tool_calls}</span>
+                      <span className="box-lbl">Tool Executions</span>
+                    </div>
+                  </div>
+
+                  <div className="scanner-loading-bar">
+                    <div className="scanner-loading-fill" style={{ width: `${(visibleStage + 1) * 16.6}%` }} />
+                  </div>
+                  <span className="scanner-phase-tag">Phase: {PIPELINE_STAGES[visibleStage]?.label}</span>
+                </div>
+              ) : (
+                /* Render signals either in real-time or when complete */
                 <div className="results-signals-scroll">
                   {signals.length === 0
                     ? <div className="signals-empty"><div className="signals-empty-icon" /><h3>No signals found</h3><p>Try scanning a different competitor.</p></div>
@@ -862,11 +1037,11 @@ function ScanWorkspace({ competitor, onBack }) {
                       ))
                   }
                 </div>
-                {selected && <Drawer key={selected.id} signal={selected} competitor={competitor} onClose={() => setSelected(null)} onPushed={handlePushed} />}
-              </div>
+              )}
+              {selected && <Drawer key={selected.id} signal={selected} competitor={competitor} onClose={() => setSelected(null)} onPushed={handlePushed} />}
             </div>
           </div>
-        )}
+        </div>
       </div>
     </div>
   );

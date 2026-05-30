@@ -68,18 +68,37 @@ export default function HowItWorks() {
         </div>
 
         {/* Architecture diagram */}
-        <div className="arch-diagram">
-          <div className="arch-box arch-box-user">User Dashboard</div>
-          <div className="arch-arrow">→</div>
-          <div className="arch-box arch-box-api">FastAPI Backend</div>
-          <div className="arch-arrow">→</div>
-          <div className="arch-box arch-box-agent">Agent Orchestrator<br /><span>Claude Opus</span></div>
-          <div className="arch-arrow">→</div>
-          <div className="arch-box arch-box-data">Bright Data<br /><span>MCP / SERP / LinkedIn</span></div>
-          <div className="arch-arrow arch-arrow-down">↓</div>
-          <div className="arch-box arch-box-db">PostgreSQL<br /><span>Supabase</span></div>
-          <div className="arch-arrow arch-arrow-down">↓</div>
-          <div className="arch-box arch-box-crm">HubSpot CRM</div>
+        <div className="arch-flow">
+          <div className="arch-level">
+            <div className="arch-box user">User Dashboard <span>React SPA (Vite)</span></div>
+          </div>
+          <div className="arch-arrow">▼</div>
+          <div className="arch-level">
+            <div className="arch-box api">FastAPI Backend <span>SSE Streaming & Route Handlers</span></div>
+          </div>
+          <div className="arch-arrow">▼</div>
+          
+          <div className="arch-row-split">
+            <div className="arch-column">
+              <div className="arch-box agent">Agent Orchestrator <span>MCP Server Integration</span></div>
+              <div className="arch-arrow">▼</div>
+              <div className="arch-sub-row">
+                <div className="arch-box primary-route">Primary Path <span>Bright Data MCP Server</span></div>
+                <div className="arch-box fallback-route">Fallback Path <span>Bright Data SERP & Web Unlocker</span></div>
+              </div>
+              <div className="arch-arrow">▼</div>
+              <div className="arch-box llm">Claude Opus (AIML API) <span>Intent Extraction & Email Pitch</span></div>
+            </div>
+            
+            <div className="arch-column db-column" style={{ justifyContent: 'center' }}>
+              <div className="arch-box db" style={{ height: 'fit-content' }}>PostgreSQL <span>Supabase Storage</span></div>
+            </div>
+          </div>
+          
+          <div className="arch-arrow">▼</div>
+          <div className="arch-level">
+            <div className="arch-box crm">HubSpot CRM <span>On "Push to CRM" click</span></div>
+          </div>
         </div>
 
         {/* Steps */}

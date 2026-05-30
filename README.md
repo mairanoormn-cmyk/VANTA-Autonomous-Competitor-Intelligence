@@ -46,46 +46,39 @@ Vanta automates competitive intelligence by:
 
 ## 🏗️ System Architecture
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                   REACT FRONTEND (Vite)                     │
-│  Home | Dashboard | How It Works | About | Navbar | Footer  │
-└────────────────────────────┬────────────────────────────────┘
-                             │ POST /api/scan
-                             ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    FASTAPI BACKEND                          │
-│  • SSE Streaming   • Route Handlers   • CRM Integration     │
-└────────────────────────────┬────────────────────────────────┘
-                             │
-                ┌────────────┴────────────┐
-                ▼                         ▼
-        ┌──────────────┐         ┌──────────────────┐
-        │   Agent      │         │   PostgreSQL /   │
-        │ Orchestrator │         │   Supabase       │
-        └──────┬───────┘         └──────────────────┘
-               │
-        ┌──────┴────────────────────────┐
-        ▼                               ▼
-    PRIMARY ROUTE              FALLBACK PIPELINE
-    (Bright Data MCP)          (Manual Tools)
-    ├─ search_engine           ├─ SERP API (8 queries)
-    ├─ web_data_reddit_posts   ├─ Web Unlocker
-    └─ scrape_as_markdown      └─ Scraping Browser
-        │                           │
-        └──────────────┬────────────┘
-                       ▼
-          ┌────────────────────────┐
-          │  Claude Opus (AIML)    │
-          │ • Signal extraction    │
-          │ • Intent scoring       │
-          │ • Battle card gen      │
-          └────────────┬───────────┘
-                       ▼
-        ┌──────────────────────────────┐
-        │  HubSpot CRM                 │
-        │ (on "Push to CRM" click)     │
-        └──────────────────────────────┘
+```mermaid
+graph TD
+    classDef default fill:#0b0f19,stroke:#1e293b,stroke-width:1px,color:#f8fafc;
+    classDef highlight fill:#1e1b4b,stroke:#8b5cf6,stroke-width:2px,color:#a78bfa;
+    classDef accent fill:#061f2d,stroke:#06b6d4,stroke-width:1px,color:#67e8f9;
+    classDef success fill:#062f1c,stroke:#10b981,stroke-width:1px,color:#34d399;
+
+    FE["💻 REACT FRONTEND (Vite)<br>Home | Dashboard | How It Works | About"]:::highlight
+    BE["⚙️ FASTAPI BACKEND<br>SSE Streaming | Route Handlers | CRM Integration"]:::highlight
+    DB["💾 PostgreSQL / Supabase<br>Scan Jobs & Signals Storage"]:::success
+    AO["🤖 Agent Orchestrator<br>Data Collection Controller"]:::default
+
+    subgraph PrimaryPath ["🚀 PRIMARY ROUTE (Bright Data MCP)"]
+        MCP["Bright Data MCP Server<br>• search_engine<br>• web_data_reddit_posts<br>• scrape_as_markdown"]:::accent
+    end
+
+    subgraph FallbackPath ["🛡️ FALLBACK PIPELINE (Manual Tools)"]
+        FB["Manual Scraper Pipeline<br>• SERP API (8 Queries)<br>• Web Unlocker<br>• Scraping Browser"]:::default
+    end
+
+    LLM["🧠 Claude Opus (AIML API)<br>• Intent Scoring (1-10)<br>• Signal Extraction<br>• Outbound Battle Cards"]:::accent
+    CRM["💼 HubSpot CRM<br>Pipeline Deals & Contacts"]:::highlight
+
+    FE -->|POST /api/scan| BE
+    BE <-->|Read/Write Scan Data| DB
+    BE -->|Trigger Agent| AO
+    AO -->|SSE transport| MCP
+    AO -.->|Fallback if MCP down| FB
+    
+    MCP --> LLM
+    FB --> LLM
+    LLM -->|SSE Stream Real-time| BE
+    BE -->|Push Deal / Lead| CRM
 ```
 
 ---
@@ -96,10 +89,9 @@ Vanta automates competitive intelligence by:
 Vanta/
 │
 ├── 📄 README.md                          # This file
-├── 📄 QUICK_START.md                     # 2-minute setup cheatsheet
 ├── 📄 SETUP_GUIDE.md                     # Detailed setup & deployment
+├── 📄 QUICK_TEST_GUIDE.md                # Node animation testing steps
 ├── 📄 AUDIT_REPORT.md                    # Project audit findings
-├── 📄 upgrade_guide_text.txt             # Feature upgrade documentation
 │
 ├── 🔷 BACKEND (FastAPI)
 │   └── backend/
@@ -379,8 +371,8 @@ cd backend
 
 ## 📖 Additional Documentation
 
-- **[QUICK_START.md](QUICK_START.md)** — 2-minute setup cheatsheet
 - **[SETUP_GUIDE.md](SETUP_GUIDE.md)** — Detailed installation & deployment guide
+- **[QUICK_TEST_GUIDE.md](QUICK_TEST_GUIDE.md)** — Node animation testing steps
 - **[AUDIT_REPORT.md](AUDIT_REPORT.md)** — Project audit findings & verification
 - **[ai-llm/README.md](ai-llm/README.md)** — Agent orchestration details
 - **[bright-data/README.md](bright-data/README.md)** — Bright Data integration guide
@@ -570,7 +562,7 @@ Open **http://localhost:5173** in your browser.
 
 1. **Multi-File Code Analysis** - Analyzed 20+ files simultaneously to understand project structure
 2. **Intelligent Debugging** - Identified 5 critical issues without running code:
-   - Missing Python packages (mcp, aiohttp, cognee)
+   - Missing Python packages (mcp, aiohttp) and package conflicts
    - Database connection error handling gaps
    - Frontend environment configuration
    - Async/await implementation patterns
@@ -580,8 +572,8 @@ Open **http://localhost:5173** in your browser.
    - PostgreSQL for persistence
    - Recharts for visualization
 4. **Documentation Generation** - Generated 2,700+ lines of production-ready documentation:
-   - README.md, QUICK_START.md, SETUP_GUIDE.md
-   - AUDIT_REPORT.md (comprehensive verification)
+    - README.md, QUICK_TEST_GUIDE.md, SETUP_GUIDE.md
+    - AUDIT_REPORT.md (comprehensive verification)
    - Feature implementation guides
 5. **Hackathon Optimization** - Analyzed competition requirements:
    - Track alignment scoring (GTM Intelligence = 95/100)

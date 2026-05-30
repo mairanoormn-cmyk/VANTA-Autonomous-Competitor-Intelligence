@@ -7,10 +7,10 @@
 ## 📋 What Was Fixed
 
 ### 🔴 CRITICAL FIXES (Blocking Issues - Now Resolved)
-1. ✅ **upgrade_guide_text.txt** - Completed with all 8 features (Features 3-8 were missing)
-2. ✅ **requirements.txt** - Added missing packages: `mcp`, `aiohttp`, `asyncio-contextmanager`, `cognee`
-3. ✅ **database.py** - Added error handling for connection failures on startup
-4. ✅ **frontend/.env.local** - Created with proper configuration
+1. ✅ **Cleaned Dependency Stack** - Pruned unused/heavy packages (`cognee`, `asyncio-contextmanager`) to prevent Vercel build/size failures while retaining primary MCP SSE client.
+2. ✅ **requirements.txt** - Added missing required runtime packages: `mcp`, `aiohttp`, `anyio>=4.0.0` (fixing critical subtyping errors in the MCP SDK).
+3. ✅ **database.py** - Added error handling for PostgreSQL connection failures on startup to prevent backend crash.
+4. ✅ **frontend/.env.local** - Created with proper local/production API routing parameters.
 
 ### 🟠 VERIFIED (Already Working)
 - ✅ `scrape_js_site()` - Async function for JavaScript-heavy sites (G2, Glassdoor, Trustpilot)
@@ -140,25 +140,24 @@ Open `http://localhost:5173` in browser and:
 - **Test**: Scan targets G2.com, Glassdoor, Trustpilot URLs
 - **Prize**: Main Track Prize ($700)
 
-### Feature 3: Cognee Agent Memory ✅
-- **Status**: Guide provided in `upgrade_guide_text.txt` Feature 3
-- **Implementation**: Create `backend/memory_manager.py` (stub provided)
-- **Prize**: Cognee Partner Prize ($500 Amazon + $2,400 credits)
+### Feature 3: Cognee Agent Memory (Roadmap Extension)
+- **Status**: Explored during architecture planning. Excluded from core build to keep the dependency footprint Vercel-serverless compatible (avoiding heavy ML graph/vector packages).
+- **Implementation**: Can be added as a separate memory service using Cognee's API or cloud database.
+- **Prize Category**: Cognee Partner Prize ($500 Amazon + $2,400 credits)
 
 ### Feature 4: LinkedIn Hiring Signals ✅
-- **Status**: Search queries included in `agent_orchestrator.py`
-- **Implementation**: Enhanced job posting detection in signal extraction
-- **Prize**: Main Track Prize
+- **Status**: Implemented via Google SERP alternative searches in `agent_orchestrator.py`.
+- **Implementation**: Fallback query scans LinkedIn URLs for companies looking for alternatives or evaluating migrators.
+- **Prize Category**: Main Track Prize
 
-### Feature 5: TriggerWare Workflows ✅
-- **Status**: Guide provided in `upgrade_guide_text.txt` Feature 5
-- **Implementation**: Create `backend/triggware_router.py` (code template provided)
-- **Prize**: TriggerWare Partner Prize ($300 Amazon)
+### Feature 5: TriggerWare Workflows (Roadmap Extension)
+- **Status**: Conceptualized for webhook-based downstream routing.
+- **Implementation**: Can be added by piping scan completions to TriggerWare hooks.
+- **Prize Category**: TriggerWare Partner Prize ($300 Amazon)
 
 ### Feature 6: Multi-Source Signal Fusion ✅
-- **Status**: `fuse_signals()` function provided in guide
-- **Implementation**: Merge duplicate company signals, boost confidence scores
-- **Prize**: Main Track Prize
+- **Status**: Implemented in prompt instruction in `agent_orchestrator.py` where Claude Opus fuses multiple mentions and context clues to infer company size, industry, and exact intent score.
+- **Prize Category**: Main Track Prize
 
 ### Feature 7: Vulnerability Radar Chart ✅
 - **Status**: Fully implemented in `frontend/src/pages/Dashboard.jsx`
@@ -244,7 +243,7 @@ Open `http://localhost:5173` in browser and:
 ## 📞 SUPPORT & DOCS
 
 - **README.md**: Project overview and architecture
-- **upgrade_guide_text.txt**: Detailed feature implementation guide
+- **VISUAL_FLOW_GUIDE.md**: User journey states and animation timeline details
 - **API Swagger Docs**: http://localhost:8000/docs (when backend running)
 - **Bright Data Docs**: https://brightdata.com/products/serp-api
 - **FastAPI Docs**: https://fastapi.tiangolo.com/
@@ -253,7 +252,7 @@ Open `http://localhost:5173` in browser and:
 
 ## ✨ NEXT STEPS
 
-1. **Complete Implementation**: Follow Features 3-8 guides in `upgrade_guide_text.txt`
+1. **Production Verification**: Run the verification checklist across the frontend and backend endpoints.
 2. **Test All Endpoints**: Use provided curl commands or Swagger UI
 3. **Optimize Performance**: Monitor SSE streams, optimize database queries
 4. **Deploy**: Choose hosting platform and deploy to production

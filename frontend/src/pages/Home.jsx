@@ -58,7 +58,10 @@ export default function Home() {
       {/* ── HERO ─────────────────────────────────────────────────────────── */}
       <section className="hero">
         <div className="hero-inner">
-          <div className="hero-badge">Autonomous AI Agent</div>
+          <div className="hero-badge">
+            <span className="pulse-dot" style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: 'var(--purple-light)' }} />
+            Autonomous AI Agent
+          </div>
 
           <h1 className="hero-title">
             Turn competitor frustration<br />
@@ -73,8 +76,8 @@ export default function Home() {
 
           <form className="hero-form" onSubmit={handleSubmit}>
             <div className="hero-input-wrap">
-              <svg className="hero-input-icon" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0z" />
+              <svg className="hero-input-icon" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M21 21l-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0z" />
               </svg>
               <input
                 className="hero-input"
