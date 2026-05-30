@@ -36,7 +36,7 @@ app.add_middleware(
         "http://127.0.0.1:5174",
         # Vercel production domains
         "https://churn-sentinel-peach.vercel.app",
-        "https://vanta-app.vercel.app",
+        "https://vanta-atnav.vercel.app",
     ],
     allow_credentials=False,
     allow_methods=["*"],
