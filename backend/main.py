@@ -1,5 +1,5 @@
 """
-Vanta — FastAPI Backend with SSE Streaming
+Vanta — FastAPI Backend with SSE Streaming (Reloader Trigger)
 """
 import json
 import os

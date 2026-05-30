@@ -77,7 +77,7 @@ def _safe_parse_signals(raw: str) -> list:
 
 
 # ── Bright Data MCP Agent (Primary Path) ─────────────────────────────────────
-async def _run_mcp_agent(competitor: str) -> tuple[bool, list]:
+async def _run_mcp_agent(competitor: str, on_event=None) -> tuple[bool, list]:
     """
     Connect to Bright Data MCP Server via SSE.
     Tools used:
@@ -86,6 +86,13 @@ async def _run_mcp_agent(competitor: str) -> tuple[bool, list]:
       - scrape_as_markdown    (G2 + Trustpilot)
     """
     comp = competitor.strip()
+
+    async def emit(evt):
+        if on_event:
+            try:
+                await on_event(evt)
+            except Exception:
+                pass
 
     try:
         from mcp import ClientSession
@@ -105,10 +112,12 @@ async def _run_mcp_agent(competitor: str) -> tuple[bool, list]:
     mcp_content: list[str] = []
 
     try:
+        await emit({"type": "thinking", "message": "Initiating connection to Bright Data MCP Server..."})
         async with sse_client(mcp_url) as (read, write):
             async with ClientSession(read, write) as session:
                 await session.initialize()
                 print("[MCP] Connected to Bright Data MCP Server.")
+                await emit({"type": "thinking", "message": "Connected to Bright Data MCP Server via SSE transport."})
 
                 # ── Tool 1: search_engine ─────────────────────────────────
                 search_queries = [
@@ -118,17 +127,26 @@ async def _run_mcp_agent(competitor: str) -> tuple[bool, list]:
                 ]
                 for q in search_queries:
                     try:
+                        await emit({"type": "thinking", "message": f"MCP search: {q}"})
+                        await emit({"type": "tool_call", "tool": "search_web", "query": q})
                         result = await session.call_tool(
                             "search_engine",
                             {"query": q, "engine": "google"},
                         )
+                        text_blocks = [block for block in result.content if getattr(block, "text", "")]
                         for block in result.content:
                             text = getattr(block, "text", "")
                             if text and len(text) > 50:
                                 mcp_content.append(f"Search: {q}\n{text[:2500]}")
                         print(f"[MCP] search_engine OK: {q[:60]}")
+                        await emit({
+                            "type": "search_result",
+                            "count": len(text_blocks),
+                            "urls": [getattr(b, "text", "")[:100] for b in text_blocks]
+                        })
                     except Exception as e:
                         print(f"[MCP] search_engine error: {e}")
+                        await emit({"type": "search_result", "count": 0, "urls": []})
 
                 # ── Tool 2: web_data_reddit_posts ─────────────────────────
                 reddit_url = (
@@ -136,17 +154,26 @@ async def _run_mcp_agent(competitor: str) -> tuple[bool, list]:
                     f"?q={comp.replace(' ', '+')}+alternatives+OR+switching&sort=new"
                 )
                 try:
+                    await emit({"type": "thinking", "message": f"MCP Reddit search: {reddit_url}"})
+                    await emit({"type": "tool_call", "tool": "search_web", "query": f"Reddit: {comp}"})
                     result = await session.call_tool(
                         "web_data_reddit_posts",
                         {"url": reddit_url},
                     )
+                    text_blocks = [block for block in result.content if getattr(block, "text", "")]
                     for block in result.content:
                         text = getattr(block, "text", "")
                         if text and len(text) > 50:
                             mcp_content.append(f"Reddit structured data:\n{text[:2500]}")
                     print("[MCP] web_data_reddit_posts OK")
+                    await emit({
+                        "type": "search_result",
+                        "count": len(text_blocks),
+                        "urls": [reddit_url]
+                    })
                 except Exception as e:
                     print(f"[MCP] web_data_reddit_posts error: {e}")
+                    await emit({"type": "search_result", "count": 0, "urls": []})
 
                 # ── Tool 3: scrape_as_markdown ────────────────────────────
                 review_urls = [
@@ -155,25 +182,53 @@ async def _run_mcp_agent(competitor: str) -> tuple[bool, list]:
                 ]
                 for url in review_urls:
                     try:
+                        await emit({"type": "thinking", "message": f"MCP scraping review page: {url}"})
+                        await emit({"type": "tool_call", "tool": "scrape_url", "url": url})
                         result = await session.call_tool(
                             "scrape_as_markdown",
                             {"url": url},
                         )
+                        text_blocks = [block for block in result.content if getattr(block, "text", "")]
+                        total_chars = sum(len(getattr(block, "text", "")) for block in text_blocks)
                         for block in result.content:
                             text = getattr(block, "text", "")
                             if text and len(text) > 200:
                                 mcp_content.append(f"Scraped {url}:\n{text[:3000]}")
                         print(f"[MCP] scrape_as_markdown OK: {url}")
+                        await emit({
+                            "type": "scrape_result",
+                            "chars": total_chars,
+                            "url": url,
+                            "preview": text_blocks[0].text[:100] if text_blocks else ""
+                        })
                     except Exception as e:
                         print(f"[MCP] scrape_as_markdown error: {e}")
+                        await emit({"type": "scrape_result", "chars": 0, "url": url, "preview": ""})
 
     except Exception as e:
+        # Check if the exception represents a standard connection/timeout issue
+        err_msg = str(e).lower()
+        is_expected = any(x in err_msg for x in ["timeout", "connect", "taskgroup", "host", "socket"])
+        if hasattr(e, "exceptions"):
+            for sub_exc in getattr(e, "exceptions", []):
+                sub_msg = str(sub_exc).lower()
+                if any(x in sub_msg for x in ["timeout", "connect", "socket"]):
+                    is_expected = True
+                    break
+        if not is_expected:
+            import traceback
+            traceback.print_exc()
         print(f"[MCP] SSE connection error: {e}")
+        await emit({"type": "thinking", "message": f"[MCP] SSE connection failed: {e}. Switching to manual scraping pipeline."})
         return False, []
+
 
     if not mcp_content:
         print("[MCP] No content retrieved — falling back.")
+        await emit({"type": "thinking", "message": "MCP path failed to retrieve web data."})
         return False, []
+
+    await emit({"type": "thinking", "message": f"MCP retrieved data from {len(mcp_content)} pages."})
 
     # ── Extract signals via Claude Opus ──────────────────────────────────────
     combined = "\n\n".join(mcp_content)
@@ -209,6 +264,7 @@ Example:
 [{{"company_name":"Mid-Market SaaS Company","company_size":"50-200","industry":"SaaS","intent_score":8,"source":"Reddit","source_details":"r/CRM pricing thread","pain_point":"Pricing","raw_text":"We spend over $19k a year on {comp}. Alternatives?"}}]"""
 
     try:
+        await emit({"type": "thinking", "message": f"Analyzing MCP web data with {AIML_MODEL}..."})
         async with httpx.AsyncClient(timeout=60) as client:
             resp = await client.post(
                 "https://api.aimlapi.com/v1/chat/completions",
@@ -227,6 +283,7 @@ Example:
                 signals = _safe_parse_signals(raw)
                 if signals:
                     print(f"[MCP] Extracted {len(signals)} signals.")
+                    await emit({"type": "thinking", "message": f"MCP path complete: {len(signals)} signals extracted."})
                     return True, signals
                 print("[MCP] No signals parsed from response.")
             else:
@@ -271,14 +328,44 @@ async def run_agent_stream(competitor: str) -> AsyncGenerator[dict, None]:
     if BRIGHT_DATA_API_KEY and AIML_API_KEY:
         yield {"type": "thinking", "message": "Connecting to Bright Data MCP Server via SSE transport..."}
         try:
-            mcp_success, signals = await asyncio.wait_for(
-                _run_mcp_agent(comp),
-                timeout=120  # 2 minute max for MCP — prevents infinite hang
-            )
+            queue = asyncio.Queue()
+            
+            async def put_event(evt):
+                queue.put_nowait(evt)
+                
+            mcp_task = asyncio.create_task(_run_mcp_agent(comp, on_event=put_event))
+            
+            start_time = asyncio.get_running_loop().time()
+            mcp_timeout = 120.0
+            
+            while not mcp_task.done() or not queue.empty():
+                while not queue.empty():
+                    evt = queue.get_nowait()
+                    yield evt
+                
+                if mcp_task.done():
+                    break
+                    
+                if asyncio.get_running_loop().time() - start_time > mcp_timeout:
+                    mcp_task.cancel()
+                    try:
+                        await mcp_task
+                    except asyncio.CancelledError:
+                        pass
+                    raise asyncio.TimeoutError()
+                    
+                await asyncio.sleep(0.1)
+                
+            mcp_success, signals = await mcp_task
         except asyncio.TimeoutError:
             print("[MCP] Timed out after 120s — falling back to manual pipeline.")
             mcp_success = False
             signals = []
+        except Exception as e:
+            print(f"[MCP] Error in agent run: {e}")
+            mcp_success = False
+            signals = []
+            
         if mcp_success:
             for sig in signals:
                 yield {
@@ -486,7 +573,7 @@ Examples:
     if not isinstance(signals, list):
         signals = []
 
-    yield {"type": "signals_ready", "signals": signals}
+    yield {"type": "signals_ready", "signals": signals, "total_signals": len(signals)}
     yield {"type": "complete",       "total_signals": len(signals)}
 
 
